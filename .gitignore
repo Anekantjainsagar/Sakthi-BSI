@@ -10,8 +10,6 @@ dist/
 build/
 *.whl
 
-bsi_api_config.py
-
 # Virtual environment
 venv/
 .venv/
@@ -21,6 +19,9 @@ env/
 # Environment variables / secrets
 .env
 *.env
+
+# API config is safe to track (secrets loaded from .env)
+!bsi_api_config.py
 
 # Reports (generated output)
 reports/
