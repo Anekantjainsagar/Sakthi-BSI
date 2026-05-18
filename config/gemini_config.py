@@ -8,17 +8,17 @@ Single source of truth for:
   - Auto key rotation  (on quota / 429, silently moves to next key)
 
 Usage in any phase file:
-    from gemini_config import call_gemini, GEMINI_MODEL, GEMINI_API_KEYS
+    from config.gemini_config import call_gemini, GEMINI_MODEL, GEMINI_API_KEYS
 """
 
 import os
 from datetime import datetime
 from pathlib import Path
 
-# Load .env from same directory as this file
+# Load .env from root directory
 try:
     from dotenv import load_dotenv
-    load_dotenv(dotenv_path=Path(__file__).parent / '.env')
+    load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 except ImportError:
     pass  # dotenv optional — keys can be set in OS environment directly
 

@@ -44,12 +44,12 @@ logger = logging.getLogger(__name__)
 
 # Import API config
 try:
-    from bsi_api_config import INFRA_DISCOVERY_APIS, APPLICATION_LANDSCAPE_APIS
+    from config.api_config import INFRA_DISCOVERY_APIS, APPLICATION_LANDSCAPE_APIS
     API_CONFIG_AVAILABLE = True
     logger.info("✅ API Config loaded")
 except ImportError:
     API_CONFIG_AVAILABLE = False
-    logger.warning("⚠️ bsi_api_config.py not found")
+    logger.warning("⚠️ api_config.py not found")
 
 # DNStwist
 try:
@@ -60,28 +60,39 @@ except ImportError:
 
 # ✅ COMMON PORTS ONLY (Most important services)
 COMMON_PORTS = [
-    80, 443, 8080, 8443, 8000, 8888,   # Web
-    22, 23, 3389, 5900,                  # Remote access
-    25, 110, 143, 465, 587, 993, 995,   # Email
-    3306, 5432, 1433, 27017, 6379, 9200, # Databases
-    21, 69, 445, 139,                    # File sharing
-    53, 67, 161,                         # DNS/Network
-    111, 135, 389, 636, 1723, 3128,     # Other
+    80, 443, 8080, 8443, 8000, 8888,          # Web
+    22, 23, 3389, 5900,                        # Remote access
+    25, 110, 143, 465, 587, 993, 995,         # Email
+    3306, 5432, 1433, 27017, 6379, 9200,      # Databases
+    1521, 11211,                               # Oracle DB, Memcached
+    21, 69, 445, 139,                          # File sharing
+    53, 67, 161,                               # DNS/Network
+    111, 135, 389, 636, 1723, 3128,           # Other
+    5985, 5986,                                # WinRM (Windows Remote Management)
+    2375, 2376,                                # Docker API (unauthenticated!)
+    10250,                                     # Kubernetes API
 ]
 
 # ✅ Banner grabbing port→protocol map
 BANNER_PROTOCOLS = {
     21:    'ftp',
     22:    'ssh',
+    23:    'telnet',
     25:    'smtp',
     80:    'http',
     110:   'pop3',
     143:   'imap',
+    389:   'ldap',
     443:   'https',
+    445:   'smb',
+    1521:  'oracle',
+    2375:  'docker',
     3306:  'mysql',
+    3389:  'rdp',
     5432:  'postgres',
     6379:  'redis',
     9200:  'elasticsearch',
+    11211: 'memcached',
     27017: 'mongodb',
 }
 
@@ -98,6 +109,12 @@ WAF_SIGNATURES = {
     'ModSecurity':         ['mod_security', 'modsecurity', 'mod_sec'],
     'Nginx WAF':           ['x-nf-request-id'],
     'Palo Alto':           ['x-pan-flow-id'],
+    'DDoS-Guard':          ['ddos-guard', 'x-ddos-guard'],
+    'Citrix NetScaler':    ['ns_af', 'citrix_ns_id', 'x-ns-request-id', 'netscaler'],
+    'Checkpoint':          ['x-chkp-sid', 'checkpoint'],
+    'NAXSI':               ['naxsi', 'x-data-origin'],
+    'Wallarm':             ['wallarm', 'x-wallarm-node'],
+    'Reblaze':             ['x-reblaze-protection', 'reblaze'],
 }
 
 # ✅ Weak SSL ciphers/protocols
@@ -153,6 +170,7 @@ class InfrastructureData:
     ip_reputation: Dict[str, Any] = None
     ssl_weaknesses: Dict[str, Any] = None
     waf_detection: Dict[str, Any] = None
+    security_misconfigs: Dict[str, Any] = None
 
     def __post_init__(self):
         if self.ip_addresses is None:           self.ip_addresses = []
@@ -176,6 +194,7 @@ class InfrastructureData:
         if self.ip_reputation is None:          self.ip_reputation = {}
         if self.ssl_weaknesses is None:         self.ssl_weaknesses = {}
         if self.waf_detection is None:          self.waf_detection = {}
+        if self.security_misconfigs is None:    self.security_misconfigs = {}
 
 
 class BSIInfrastructureDiscovery:
@@ -196,7 +215,11 @@ class BSIInfrastructureDiscovery:
             'AS20940': 'Akamai',         'AS16625': 'Akamai',
             'AS54113': 'Fastly',         'AS2906':  'Netflix',
             'AS32934': 'Facebook',       'AS36459': 'GitHub',
-            'AS14340': 'Salesforce'
+            'AS14340': 'Salesforce',
+            'AS31898': 'Oracle Cloud',   'AS36351': 'IBM Cloud',
+            'AS45102': 'Alibaba Cloud',  'AS22394': 'Heroku',
+            'AS63949': 'Linode',         'AS20473': 'Vultr',
+            'AS24940': 'Hetzner',        'AS16276': 'OVH',
         }
 
         self.mail_providers = {
@@ -215,6 +238,18 @@ class BSIInfrastructureDiscovery:
             'amazonses.com': 'Amazon SES',
             'zoho.com': 'Zoho Mail',
             'rackspace.com': 'Rackspace Email',
+            'postmarkapp.com': 'Postmark',
+            'mtasv.net': 'Postmark',
+            'brevo.com': 'Brevo (Sendinblue)',
+            'sendinblue.com': 'Brevo (Sendinblue)',
+            'sparkpostmail.com': 'SparkPost',
+            'sp.mtasolutions.com': 'SparkPost',
+            'yandex.ru': 'Yandex Mail',
+            'yandex.net': 'Yandex Mail',
+            'ironscales.com': 'Ironscales Email Security',
+            'barracudanetworks.com': 'Barracuda Email Security',
+            'ess.barracuda.com': 'Barracuda Email Security',
+            'abnormalsecurity.com': 'Abnormal Security',
         }
 
         self.session = None
@@ -290,8 +325,12 @@ class BSIInfrastructureDiscovery:
         logger.info("🛡️ Phase 10: WAF detection...")
         await self._waf_detection(target, data)
 
-        # Phase 11: IP Reputation (upgraded with AbuseIPDB + AlienVault + VT)
-        logger.info("🚨 Phase 11: IP reputation check...")
+        # ✅ NEW Phase 11: Security Misconfigurations
+        logger.info("🔎 Phase 11: Security misconfiguration checks...")
+        await self._security_misconfig_check(target, data)
+
+        # Phase 12: IP Reputation (upgraded with AbuseIPDB + AlienVault + VT)
+        logger.info("🚨 Phase 12: IP reputation check...")
         # Priority: IPs with open ports first, then remaining IPs
         ips_with_ports = [ip for ip in data.ip_addresses if ip in data.open_ports]
         ips_without_ports = [ip for ip in data.ip_addresses if ip not in data.open_ports]
@@ -299,7 +338,7 @@ class BSIInfrastructureDiscovery:
         logger.info(f"🎯 Reputation priority: {len(ips_with_ports)} IPs with open ports + {len(ips_without_ports)} others")
         await self._ip_reputation_full(prioritized_ips, data)
 
-        # Phase 12: DNStwist
+        # Phase 13: DNStwist
         await self._run_dnstwist(target, data)
 
         logger.info(f"✅ Infrastructure discovery completed for: {target}")
@@ -500,7 +539,7 @@ class BSIInfrastructureDiscovery:
             except:
                 return info
 
-            start_time = asyncio.get_event_loop().time()
+            start_time = asyncio.get_running_loop().time()
             for scheme in ['https', 'http']:
                 try:
                     async with self.session.get(
@@ -510,7 +549,7 @@ class BSIInfrastructureDiscovery:
                             info.https_status = response.status
                         else:
                             info.http_status = response.status
-                        info.response_time = asyncio.get_event_loop().time() - start_time
+                        info.response_time = asyncio.get_running_loop().time() - start_time
                         info.server_header = response.headers.get('Server', 'Unknown')
                         if response.status in ACTIVE_STATUSES:
                             info.is_active = True
@@ -551,7 +590,7 @@ class BSIInfrastructureDiscovery:
                     'ip': ip, 'asn': None, 'asn_name': None,
                     'country': None, 'city': None, 'isp': None,
                     'organization': None, 'hosting': None, 'proxy': None,
-                    'ipinfo': {}, 'ipregistry': {}
+                    'ipinfo': {}, 'ipregistry': {}, 'neutrinoapi': {}, 'networksdb': {}
                 }
 
             # ip-api.com (free base data)
@@ -587,6 +626,12 @@ class BSIInfrastructureDiscovery:
 
             # ✅ NEW: IPRegistry enrichment
             await self._enrich_ip_ipregistry(ip, data)
+
+            # ✅ NEW: NeutrinoAPI enrichment (VPN/proxy/TOR detection)
+            await self._enrich_ip_neutrinoapi(ip, data)
+
+            # ✅ NEW: NetworksDB enrichment (network owner + abuse contact)
+            await self._enrich_ip_networksdb(ip, data)
 
     # ✅ NEW METHOD #8a — IPInfo enrichment
     async def _enrich_ip_ipinfo(self, ip: str, data: InfrastructureData):
@@ -647,6 +692,69 @@ class BSIInfrastructureDiscovery:
         except Exception as e:
             logger.debug(f"IPRegistry failed for {ip}: {e}")
 
+    # ✅ NEW METHOD #8c — NeutrinoAPI enrichment
+    async def _enrich_ip_neutrinoapi(self, ip: str, data: InfrastructureData):
+        """Enrich IP with NeutrinoAPI (VPN/proxy/TOR + connection type)"""
+        if not API_CONFIG_AVAILABLE:
+            return
+        try:
+            config = INFRA_DISCOVERY_APIS['ip_geolocation']['neutrinoapi']
+            if not config.get('enabled'):
+                return
+            url = config['endpoint']
+            params = {
+                'user-id':  config['user_id'],
+                'api-key':  config['api_key'],
+                'ip':       ip,
+                'var-name': 'ip-info'
+            }
+            async with self.session.get(url, params=params, timeout=10) as response:
+                if response.status == 200:
+                    nd = await response.json()
+                    data.asn_info[ip]['neutrinoapi'] = {
+                        'is_vpn':          nd.get('is-vpn', False),
+                        'is_proxy':        nd.get('is-proxy', False),
+                        'is_tor':          nd.get('is-tor', False),
+                        'is_hosting':      nd.get('is-hosting', False),
+                        'is_isp':          nd.get('is-isp', False),
+                        'connection_type': nd.get('connection-type', ''),
+                        'country':         nd.get('country', ''),
+                        'city':            nd.get('city', ''),
+                        'isp':             nd.get('isp', ''),
+                    }
+                    logger.debug(f"✅ NeutrinoAPI enriched: {ip}")
+        except Exception as e:
+            logger.debug(f"NeutrinoAPI failed for {ip}: {e}")
+
+    # ✅ NEW METHOD #8d — NetworksDB enrichment
+    async def _enrich_ip_networksdb(self, ip: str, data: InfrastructureData):
+        """Enrich IP with NetworksDB (network owner + abuse contact)"""
+        if not API_CONFIG_AVAILABLE:
+            return
+        try:
+            config = INFRA_DISCOVERY_APIS['network']
+            if not config.get('enabled'):
+                return
+            url = f"{config['endpoint']}"
+            headers = {'X-Api-Key': config['api_key']}
+            params = {'ip': ip}
+            async with self.session.get(url, headers=headers, params=params, timeout=10) as response:
+                if response.status == 200:
+                    nd = await response.json()
+                    networks = nd.get('results', [{}])
+                    first = networks[0] if networks else {}
+                    data.asn_info[ip]['networksdb'] = {
+                        'network':         first.get('cidr', ''),
+                        'network_name':    first.get('name', ''),
+                        'org_name':        first.get('org_name', ''),
+                        'country':         first.get('country_code', ''),
+                        'abuse_email':     first.get('abuse_email', ''),
+                        'network_type':    first.get('type', ''),
+                    }
+                    logger.debug(f"✅ NetworksDB enriched: {ip}")
+        except Exception as e:
+            logger.debug(f"NetworksDB failed for {ip}: {e}")
+
     async def _full_port_scan_all_ips(self, data: InfrastructureData):
         for ip in data.ip_addresses[:20]:
             logger.info(f"Scanning {ip}...")
@@ -696,10 +804,11 @@ class BSIInfrastructureDiscovery:
             135:'MS-RPC', 139:'NetBIOS', 143:'IMAP', 161:'SNMP',
             389:'LDAP', 443:'HTTPS', 445:'SMB', 465:'SMTPS',
             587:'SMTP-Submission', 636:'LDAPS', 993:'IMAPS', 995:'POP3S',
-            1433:'MS-SQL', 1723:'PPTP', 3128:'Squid-Proxy', 3306:'MySQL',
-            3389:'RDP', 5432:'PostgreSQL', 5900:'VNC', 6379:'Redis',
-            8000:'HTTP-Alt', 8080:'HTTP-Proxy', 8443:'HTTPS-Alt',
-            8888:'HTTP-Alt', 9200:'Elasticsearch', 27017:'MongoDB'
+            1433:'MS-SQL', 1521:'Oracle-DB', 1723:'PPTP', 3128:'Squid-Proxy', 3306:'MySQL',
+            3389:'RDP', 5432:'PostgreSQL', 5900:'VNC', 5985:'WinRM', 5986:'WinRM-SSL',
+            6379:'Redis', 8000:'HTTP-Alt', 8080:'HTTP-Proxy', 8443:'HTTPS-Alt',
+            8888:'HTTP-Alt', 9200:'Elasticsearch', 10250:'Kubernetes-API',
+            11211:'Memcached', 27017:'MongoDB', 2375:'Docker-API', 2376:'Docker-SSL'
         }
 
         async def check_port(port):
@@ -940,6 +1049,17 @@ class BSIInfrastructureDiscovery:
         """
         dns_records = data.dns_records
 
+        # --- TXT records ---
+        try:
+            answers = dns.resolver.resolve(target, 'TXT')
+            dns_records['TXT'] = []
+            for r in answers:
+                txt_str = r.to_text().strip('"')
+                dns_records['TXT'].append(txt_str)
+            logger.info(f"✅ TXT records: {len(dns_records['TXT'])}")
+        except Exception:
+            dns_records['TXT'] = []
+
         # --- CAA records ---
         try:
             answers = dns.resolver.resolve(target, 'CAA')
@@ -1034,6 +1154,16 @@ class BSIInfrastructureDiscovery:
                 dns_records['AXFR']['note'] = "Zone transfer refused (secure)"
 
         logger.info(f"✅ AXFR test: {'VULNERABLE' if dns_records['AXFR']['vulnerable'] else 'Secure'}")
+
+        # --- DNSSEC ---
+        try:
+            answers = dns.resolver.resolve(target, 'DNSKEY')
+            dns_records['DNSSEC'] = {'enabled': True, 'keys': len(answers)}
+            logger.info(f"✅ DNSSEC enabled — {len(answers)} key(s)")
+        except Exception:
+            dns_records['DNSSEC'] = {'enabled': False}
+            logger.info("ℹ️ DNSSEC not enabled")
+
         data.dns_records = dns_records
 
     # =========================================================================
@@ -1230,7 +1360,12 @@ class BSIInfrastructureDiscovery:
 
             # DKIM
             dkim_found = []
-            for selector in ['default', 'google', 'microsoft', 'mail', 'smtp', 'selector1', 'selector2', 'k1']:
+            for selector in [
+                'default', 'google', 'microsoft', 'mail', 'smtp',
+                'selector1', 'selector2', 'k1', 'dkim', 'dkim1',
+                'email', 'proofpoint', 'mimecast', 'ironscales',
+                's1', 's2', 'mandrill', 'mailchimp', 'sendgrid',
+            ]:
                 try:
                     dkim_records = dns.resolver.resolve(f'{selector}._domainkey.{target}', 'TXT')
                     for record in dkim_records:
@@ -1400,6 +1535,7 @@ class BSIInfrastructureDiscovery:
         waf_result = {
             'detected':    False,
             'waf_name':    None,
+            'waf_names':   [],
             'confidence':  'none',
             'evidence':    [],
             'method':      []
@@ -1424,19 +1560,25 @@ class BSIInfrastructureDiscovery:
                             # Check in headers
                             if any(sig_lower in hk or sig_lower in hv for hk, hv in headers_lower.items()):
                                 waf_result['detected']   = True
-                                waf_result['waf_name']   = waf_name
                                 waf_result['confidence'] = 'high'
-                                waf_result['evidence'].append(f"Header contains '{sig}'")
-                                waf_result['method'].append('header_inspection')
+                                waf_result['evidence'].append(f"Header contains '{sig}' ({waf_name})")
+                                if 'header_inspection' not in waf_result['method']:
+                                    waf_result['method'].append('header_inspection')
+                                if waf_name not in waf_result['waf_names']:
+                                    waf_result['waf_names'].append(waf_name)
                             # Check in body
                             elif sig_lower in body:
                                 waf_result['detected']   = True
-                                waf_result['waf_name']   = waf_name
-                                waf_result['confidence'] = 'medium'
-                                waf_result['evidence'].append(f"Body contains '{sig}'")
-                                waf_result['method'].append('body_inspection')
+                                if waf_result['confidence'] != 'high':
+                                    waf_result['confidence'] = 'medium'
+                                waf_result['evidence'].append(f"Body contains '{sig}' ({waf_name})")
+                                if 'body_inspection' not in waf_result['method']:
+                                    waf_result['method'].append('body_inspection')
+                                if waf_name not in waf_result['waf_names']:
+                                    waf_result['waf_names'].append(waf_name)
 
                     if waf_result['detected']:
+                        waf_result['waf_name'] = ', '.join(waf_result['waf_names'])
                         logger.info(f"✅ WAF detected: {waf_result['waf_name']} ({waf_result['confidence']} confidence)")
             except:
                 pass
@@ -1466,11 +1608,15 @@ class BSIInfrastructureDiscovery:
                                 for sig in signatures:
                                     if sig.lower() in body or any(sig.lower() in hv for hv in headers_lower.values()):
                                         waf_result['detected']   = True
-                                        waf_result['waf_name']   = waf_name
                                         waf_result['confidence'] = 'high'
-                                        waf_result['evidence'].append(f"WAF blocked malicious probe with {response.status}")
-                                        waf_result['method'].append('probe_response')
-                                        break
+                                        if 'probe_response' not in waf_result['method']:
+                                            waf_result['method'].append('probe_response')
+                                        if waf_name not in waf_result['waf_names']:
+                                            waf_result['waf_names'].append(waf_name)
+                                            waf_result['evidence'].append(f"WAF probe blocked ({response.status}) — {waf_name}")
+
+                            if waf_result['waf_names']:
+                                waf_result['waf_name'] = ', '.join(waf_result['waf_names'])
 
                             # Generic WAF detection if no specific signature matched
                             if not waf_result['detected'] and response.status == 403:
@@ -1494,7 +1640,7 @@ class BSIInfrastructureDiscovery:
         logger.info(f"🛡️ WAF: {'Detected — ' + waf_result['waf_name'] if waf_result['detected'] else 'Not detected'}")
 
     # =========================================================================
-    # ✅ NEW METHOD #5 — Full IP Reputation (AbuseIPDB + AlienVault + VirusTotal)
+    # ✅ NEW METHOD #5 — Full IP Reputation (AbuseIPDB + AlienVault + VirusTotal + FraudGuard)
     # =========================================================================
 
     async def _ip_reputation_full(self, ip_addresses: List[str], data: InfrastructureData):
@@ -1504,6 +1650,7 @@ class BSIInfrastructureDiscovery:
         2. AbuseIPDB (abuse score)
         3. AlienVault OTX (threat intel)
         4. VirusTotal (malicious detections)
+        5. FraudGuard (fraud risk score + botnet/TOR/proxy flags)
         """
         for ip in ip_addresses[:20]:
             await asyncio.sleep(1)
@@ -1513,12 +1660,18 @@ class BSIInfrastructureDiscovery:
                 'abuseipdb':    {},
                 'alienvault':   {},
                 'virustotal':   {},
-                'overall_risk': 'unknown'
+                'fraudguard':   {},
             }
 
             # 1. DNS blacklists
             reversed_ip = '.'.join(reversed(ip.split('.')))
-            for bl in ['zen.spamhaus.org', 'bl.spamcop.net', 'dnsbl.sorbs.net', 'b.barracudacentral.org']:
+            for bl in [
+                'zen.spamhaus.org', 'pbl.spamhaus.org',
+                'bl.spamcop.net', 'dnsbl.sorbs.net',
+                'b.barracudacentral.org', 'cbl.abuseat.org',
+                'multi.uribl.com', 'psbl.surriel.com',
+                'dnsbl.abuse.ch', 'dnsbl.dronebl.org',
+            ]:
                 try:
                     dns.resolver.resolve(f"{reversed_ip}.{bl}", 'A')
                     rep['blacklists'].append({'ip': ip, 'blacklist': bl, 'listed': True})
@@ -1604,8 +1757,31 @@ class BSIInfrastructureDiscovery:
                 except Exception as e:
                     logger.warning(f"VirusTotal failed for {ip}: {e}")
 
-            # Calculate overall risk level
-            rep['overall_risk'] = self._calculate_ip_risk(rep)
+            # 5. FraudGuard
+            if API_CONFIG_AVAILABLE:
+                try:
+                    config = INFRA_DISCOVERY_APIS.get('spiderfoot_apis', {}).get('fraudguard', {})
+                    if config.get('enabled'):
+                        url = f"{config['endpoint']}{ip}"
+                        auth = aiohttp.BasicAuth(config['username'], config['password'])
+                        async with self.session.get(url, auth=auth, timeout=10) as response:
+                            if response.status == 200:
+                                fg_data = await response.json()
+                                rep['fraudguard'] = {
+                                    'risk_level':       fg_data.get('risk_level', 0),
+                                    'threat':           fg_data.get('threat', ''),
+                                    'is_tor':           fg_data.get('tor', False),
+                                    'is_proxy':         fg_data.get('proxy', False),
+                                    'is_vpn':           fg_data.get('vpn_or_hosted', False),
+                                    'is_botnet':        fg_data.get('botnet', False),
+                                    'is_spam':          fg_data.get('spam', False),
+                                    'country':          fg_data.get('country', ''),
+                                    'isp':              fg_data.get('isp', ''),
+                                }
+                                logger.debug(f"✅ FraudGuard {ip}: risk_level={rep['fraudguard']['risk_level']}")
+                except Exception as e:
+                    logger.warning(f"FraudGuard failed for {ip}: {e}")
+
             data.ip_reputation[ip] = rep
 
             # Also update blacklisted_ips for backward compatibility
@@ -1614,35 +1790,537 @@ class BSIInfrastructureDiscovery:
 
         logger.info(f"✅ IP reputation checked for {len(data.ip_reputation)} IPs")
 
-    def _calculate_ip_risk(self, rep: Dict) -> str:
-        """Calculate overall risk level for an IP based on all reputation sources"""
-        score = 0
+    # =========================================================================
+    # ✅ NEW — Security Misconfiguration Checks
+    # =========================================================================
 
-        # Blacklist hits
-        score += len(rep.get('blacklists', [])) * 20
+    async def _security_misconfig_check(self, target: str, data: InfrastructureData):
+        """
+        Check for 4 categories of security misconfigurations:
+        a) Exposed sensitive files (.env, .git, wp-config, etc.)
+        b) Open admin panels (/admin, /phpmyadmin, etc.)
+        c) Open unauthenticated databases (Redis, MongoDB, Elasticsearch)
+        d) Directory listing enabled
+        """
+        results = {
+            'exposed_files':        [],
+            'open_admin_panels':    [],
+            'open_databases':       [],
+            'directory_listing':    [],
+            'subdomain_takeovers':  [],
+            'open_buckets':         [],
+            'summary': {'total': 0, 'critical': 0, 'high': 0, 'medium': 0}
+        }
 
-        # AbuseIPDB score
-        abuse_score = rep.get('abuseipdb', {}).get('abuse_score', 0)
-        if abuse_score > 75:   score += 40
-        elif abuse_score > 50: score += 25
-        elif abuse_score > 25: score += 10
+        # Build list of hosts to check: main domain + active subdomains (up to 20)
+        hosts = [target]
+        for sub in data.active_subdomains[:20]:
+            if sub.is_active and sub.subdomain != target:
+                hosts.append(sub.subdomain)
 
-        # AlienVault pulses
-        pulses = rep.get('alienvault', {}).get('pulse_count', 0)
-        if pulses > 10: score += 30
-        elif pulses > 5: score += 15
-        elif pulses > 0: score += 5
+        logger.info(f"🔎 Misconfig checks on {len(hosts)} hosts...")
 
-        # VirusTotal malicious
-        vt_malicious = rep.get('virustotal', {}).get('malicious', 0)
-        if vt_malicious > 5:  score += 40
-        elif vt_malicious > 0: score += 20
+        # ------------------------------------------------------------------ #
+        # A) Exposed sensitive files
+        # ------------------------------------------------------------------ #
+        SENSITIVE_FILES = [
+            ('/.env',              'CRITICAL', 'Environment variables (DB passwords, API keys)'),
+            ('/.git/HEAD',         'CRITICAL', 'Git repository exposed'),
+            ('/.git/config',       'CRITICAL', 'Git config with remote URL'),
+            ('/wp-config.php',     'CRITICAL', 'WordPress database credentials'),
+            ('/config.php',        'HIGH',     'PHP configuration file'),
+            ('/database.yml',      'CRITICAL', 'Database credentials (Rails)'),
+            ('/.htpasswd',         'HIGH',     'HTTP basic auth password file'),
+            ('/web.config',        'HIGH',     'IIS configuration file'),
+            ('/backup.zip',        'HIGH',     'Backup archive exposed'),
+            ('/backup.tar.gz',     'HIGH',     'Backup archive exposed'),
+            ('/dump.sql',          'CRITICAL', 'SQL database dump'),
+            ('/db.sql',            'CRITICAL', 'SQL database dump'),
+            ('/.env.backup',       'CRITICAL', 'Environment backup file'),
+            ('/.env.local',        'CRITICAL', 'Local environment variables'),
+            ('/config/database.yml','CRITICAL','Database config (Rails)'),
+            ('/server-status',     'MEDIUM',   'Apache server-status exposed'),
+            ('/phpinfo.php',       'MEDIUM',   'PHP info page exposed'),
+            ('/info.php',          'MEDIUM',   'PHP info page exposed'),
+            ('/.DS_Store',         'LOW',      'macOS metadata file (reveals directory structure)'),
+            ('/robots.txt',        'INFO',     'Robots.txt (check for hidden paths)'),
+        ]
 
-        if score >= 60:  return 'CRITICAL'
-        if score >= 40:  return 'HIGH'
-        if score >= 20:  return 'MEDIUM'
-        if score > 0:    return 'LOW'
-        return 'CLEAN'
+        sem_files = asyncio.Semaphore(20)
+
+        async def _check_sensitive_file(host, path, severity, desc):
+            async with sem_files:
+                for scheme in ['https', 'http']:
+                    try:
+                        url = f"{scheme}://{host}{path}"
+                        async with self.session.get(
+                            url, timeout=5, ssl=False, allow_redirects=False
+                        ) as resp:
+                            if resp.status in (200, 206):
+                                content_len = int(resp.headers.get('Content-Length', 0))
+                                body_preview = ''
+                                try:
+                                    raw = await resp.read()
+                                    body_preview = raw[:200].decode('utf-8', errors='ignore')
+                                    content_len = content_len or len(raw)
+                                except:
+                                    pass
+                                if path in ('/.env', '/.git/HEAD', '/dump.sql', '/db.sql'):
+                                    if '<html' in body_preview.lower() and content_len > 5000:
+                                        return
+                                results['exposed_files'].append({
+                                    'url':      url,
+                                    'status':   resp.status,
+                                    'severity': severity,
+                                    'size':     content_len,
+                                    'desc':     desc,
+                                    'preview':  body_preview[:100].strip(),
+                                })
+                                logger.warning(f"🚨 Exposed file [{severity}]: {url}")
+                                return  # skip http if https found
+                    except:
+                        pass
+
+        file_tasks = [
+            _check_sensitive_file(host, path, severity, desc)
+            for host in hosts[:20]
+            for path, severity, desc in SENSITIVE_FILES
+        ]
+        await asyncio.gather(*file_tasks)
+
+        # ------------------------------------------------------------------ #
+        # B) Open admin panels
+        # ------------------------------------------------------------------ #
+        ADMIN_PATHS = [
+            ('/admin',             'HIGH',     'Generic admin panel'),
+            ('/admin/',            'HIGH',     'Generic admin panel'),
+            ('/wp-admin/',         'HIGH',     'WordPress admin'),
+            ('/wp-admin/login',    'HIGH',     'WordPress login'),
+            ('/phpmyadmin',        'CRITICAL', 'phpMyAdmin — DB management'),
+            ('/phpmyadmin/',       'CRITICAL', 'phpMyAdmin — DB management'),
+            ('/pma/',              'CRITICAL', 'phpMyAdmin shortcut'),
+            ('/adminer.php',       'CRITICAL', 'Adminer — DB management'),
+            ('/adminer',           'CRITICAL', 'Adminer — DB management'),
+            ('/manager/html',      'CRITICAL', 'Apache Tomcat manager'),
+            ('/manager/',          'HIGH',     'Apache Tomcat manager'),
+            ('/console',           'CRITICAL', 'JBoss/WildFly console'),
+            ('/jmx-console',       'CRITICAL', 'JBoss JMX console'),
+            ('/jenkins',           'HIGH',     'Jenkins CI/CD'),
+            ('/jenkins/',          'HIGH',     'Jenkins CI/CD'),
+            ('/grafana',           'HIGH',     'Grafana dashboard'),
+            ('/kibana',            'HIGH',     'Kibana (Elasticsearch UI)'),
+            ('/solr',              'HIGH',     'Apache Solr admin'),
+            ('/roundcube',         'MEDIUM',   'Roundcube webmail'),
+            ('/cpanel',            'HIGH',     'cPanel hosting admin'),
+            ('/webmin',            'HIGH',     'Webmin server admin'),
+        ]
+
+        # Fetch homepage titles in parallel first (needed for false positive detection)
+        host_homepage_titles = {}
+
+        async def _fetch_homepage_title(host):
+            try:
+                async with self.session.get(
+                    f"https://{host}", timeout=5, ssl=False, allow_redirects=True
+                ) as resp:
+                    body = (await resp.text())[:2000]
+                    m = re.search(r'<title>(.*?)</title>', body, re.IGNORECASE)
+                    host_homepage_titles[host] = m.group(1).strip().lower() if m else ''
+            except:
+                host_homepage_titles[host] = ''
+
+        await asyncio.gather(*[_fetch_homepage_title(h) for h in hosts[:20]])
+
+        # Now check all admin paths in parallel
+        sem_admin = asyncio.Semaphore(20)
+
+        async def _check_admin_panel(host, path, severity, desc):
+            async with sem_admin:
+                homepage_title = host_homepage_titles.get(host, '')
+                for scheme in ['https', 'http']:
+                    try:
+                        url = f"{scheme}://{host}{path}"
+                        async with self.session.get(
+                            url, timeout=5, ssl=False, allow_redirects=True
+                        ) as resp:
+                            if resp.status in (200, 401, 403):
+                                body = ''
+                                title = ''
+                                try:
+                                    body = (await resp.text())[:3000].lower()
+                                    m = re.search(r'<title>(.*?)</title>', body, re.IGNORECASE)
+                                    if m:
+                                        title = m.group(1)[:80].strip()
+                                except:
+                                    pass
+                                is_false_positive = (
+                                    resp.status == 200
+                                    and bool(homepage_title)
+                                    and bool(title)
+                                    and title.lower() == homepage_title
+                                )
+                                access = 'OPEN' if resp.status == 200 else 'RESTRICTED'
+                                eff_severity = severity if access == 'OPEN' else 'LOW'
+                                if is_false_positive:
+                                    eff_severity = 'INFO'
+                                results['open_admin_panels'].append({
+                                    'url':           url,
+                                    'status':        resp.status,
+                                    'access':        access,
+                                    'severity':      eff_severity,
+                                    'desc':          desc,
+                                    'title':         title,
+                                    'false_positive': is_false_positive,
+                                })
+                                if is_false_positive:
+                                    logger.info(f"ℹ️ Admin path redirects to homepage (false positive): {url}")
+                                else:
+                                    logger.warning(f"🔑 Admin panel [{eff_severity}] ({access}): {url}")
+                                return  # skip http if https found
+                    except:
+                        pass
+
+        admin_tasks = [
+            _check_admin_panel(host, path, severity, desc)
+            for host in hosts[:20]
+            for path, severity, desc in ADMIN_PATHS
+        ]
+        await asyncio.gather(*admin_tasks)
+
+        # ------------------------------------------------------------------ #
+        # C) Open unauthenticated databases
+        # ------------------------------------------------------------------ #
+        db_checks = [
+            (6379,  'Redis',           'CRITICAL'),
+            (27017, 'MongoDB',         'CRITICAL'),
+            (9200,  'Elasticsearch',   'CRITICAL'),
+            (11211, 'Memcached',       'HIGH'),
+            (2375,  'Docker API',      'CRITICAL'),
+        ]
+
+        for ip, ports in data.open_ports.items():
+            for port, service, severity in db_checks:
+                if port not in ports:
+                    continue
+                finding = None
+
+                if port == 6379:  # Redis — send PING
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(ip, port), timeout=3
+                        )
+                        writer.write(b"PING\r\n")
+                        await writer.drain()
+                        response = await asyncio.wait_for(reader.read(64), timeout=3)
+                        writer.close()
+                        resp_str = response.decode('utf-8', errors='ignore')
+                        if '+PONG' in resp_str or 'PONG' in resp_str:
+                            finding = {
+                                'ip': ip, 'port': port, 'service': service,
+                                'severity': severity, 'auth_required': False,
+                                'detail': 'Redis responded to PING — no authentication required',
+                            }
+                    except:
+                        pass
+
+                elif port == 27017:  # MongoDB — check HTTP interface or isMaster
+                    try:
+                        async with self.session.get(
+                            f"http://{ip}:{port}", timeout=5
+                        ) as resp:
+                            if resp.status == 200:
+                                body = await resp.text()
+                                if 'mongodb' in body.lower() or 'mongo' in body.lower():
+                                    finding = {
+                                        'ip': ip, 'port': port, 'service': service,
+                                        'severity': severity, 'auth_required': False,
+                                        'detail': 'MongoDB HTTP interface accessible — no auth',
+                                    }
+                    except:
+                        pass
+
+                elif port == 9200:  # Elasticsearch — GET /_cat/indices
+                    try:
+                        async with self.session.get(
+                            f"http://{ip}:{port}/_cat/indices?v", timeout=5
+                        ) as resp:
+                            if resp.status == 200:
+                                body = await resp.text()
+                                index_count = body.count('\n') - 1
+                                finding = {
+                                    'ip': ip, 'port': port, 'service': service,
+                                    'severity': severity, 'auth_required': False,
+                                    'detail': f'Elasticsearch open — {max(0,index_count)} indices accessible without auth',
+                                }
+                    except:
+                        pass
+
+                elif port == 11211:  # Memcached — send stats
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(ip, port), timeout=3
+                        )
+                        writer.write(b"stats\r\n")
+                        await writer.drain()
+                        response = await asyncio.wait_for(reader.read(256), timeout=3)
+                        writer.close()
+                        resp_str = response.decode('utf-8', errors='ignore')
+                        if 'STAT' in resp_str:
+                            finding = {
+                                'ip': ip, 'port': port, 'service': service,
+                                'severity': severity, 'auth_required': False,
+                                'detail': 'Memcached open — stats command responded without auth',
+                            }
+                    except:
+                        pass
+
+                elif port == 2375:  # Docker API — GET /version
+                    try:
+                        async with self.session.get(
+                            f"http://{ip}:{port}/version", timeout=5
+                        ) as resp:
+                            if resp.status == 200:
+                                docker_data = await resp.json()
+                                version = docker_data.get('Version', 'unknown')
+                                finding = {
+                                    'ip': ip, 'port': port, 'service': service,
+                                    'severity': severity, 'auth_required': False,
+                                    'detail': f'Docker API open — v{version} — full container control possible',
+                                }
+                    except:
+                        pass
+
+                if finding:
+                    results['open_databases'].append(finding)
+                    logger.warning(f"🚨 Open DB [{severity}]: {service} on {ip}:{port}")
+
+        # ------------------------------------------------------------------ #
+        # D) Directory listing detection
+        # ------------------------------------------------------------------ #
+        DIR_PATHS = ['/', '/images/', '/uploads/', '/files/', '/backup/',
+                     '/static/', '/assets/', '/css/', '/js/', '/media/']
+
+        for host in hosts[:20]:
+            for scheme in ['https', 'http']:
+                for path in DIR_PATHS:
+                    try:
+                        url = f"{scheme}://{host}{path}"
+                        async with self.session.get(
+                            url, timeout=5, ssl=False, allow_redirects=True
+                        ) as resp:
+                            if resp.status == 200:
+                                try:
+                                    body = (await resp.text())[:5000]
+                                    if 'Index of /' in body or 'Directory listing for' in body or \
+                                       ('Parent Directory' in body and '<a href=' in body):
+                                        results['directory_listing'].append({
+                                            'url':      url,
+                                            'path':     path,
+                                            'severity': 'MEDIUM',
+                                            'detail':   'Directory listing enabled — file enumeration possible',
+                                        })
+                                        logger.warning(f"📂 Directory listing: {url}")
+                                        break  # one finding per host is enough
+                                except:
+                                    pass
+                    except:
+                        pass
+                await asyncio.sleep(0.1)
+
+        # ------------------------------------------------------------------ #
+        # E) Subdomain Takeover Detection
+        # ------------------------------------------------------------------ #
+        # Fingerprints: service name → (CNAME fragment to match, body fragment that confirms unclaimed)
+        TAKEOVER_FINGERPRINTS = {
+            'GitHub Pages':    ('github.io',              "there isn't a github pages site here"),
+            'Heroku':          ('herokuapp.com',          'no such app'),
+            'Azure':           ('azurewebsites.net',      'web app - unavailable'),
+            'Shopify':         ('myshopify.com',          "sorry, this shop is currently unavailable"),
+            'Fastly':          ('fastly.net',             'fastly error: unknown domain'),
+            'Netlify':         ('netlify.app',            "not found - request id"),
+            'Surge.sh':        ('surge.sh',               "project not found"),
+            'Pantheon':        ('pantheonsite.io',        'the gods are wise'),
+            'Ghost':           ('ghost.io',               "failed to resolve dns"),
+            'Cargo':           ('cargocollective.com',    '404 not found'),
+            'Tumblr':          ('tumblr.com',             "whatever you were looking for doesn't live here"),
+            'WordPress.com':   ('wordpress.com',          "do you want to register"),
+            'Zendesk':         ('zendesk.com',            "help center closed"),
+            'Freshdesk':       ('freshdesk.com',          "there is no helpdesk here"),
+            'Unbounce':        ('unbouncepages.com',      "the requested url was not found"),
+        }
+
+        for sub_info in data.active_subdomains[:30]:
+            subdomain = sub_info.subdomain
+            try:
+                # Resolve CNAME
+                try:
+                    cname_answers = dns.resolver.resolve(subdomain, 'CNAME')
+                    cname_target = str(cname_answers[0].target).lower().rstrip('.')
+                except Exception:
+                    continue  # No CNAME — skip
+
+                for service, (cname_fragment, body_fingerprint) in TAKEOVER_FINGERPRINTS.items():
+                    if cname_fragment not in cname_target:
+                        continue
+                    # CNAME matches a cloud service — now check if it's unclaimed
+                    try:
+                        for scheme in ['https', 'http']:
+                            try:
+                                async with self.session.get(
+                                    f"{scheme}://{subdomain}", timeout=6, ssl=False, allow_redirects=True
+                                ) as resp:
+                                    body = (await resp.text())[:3000].lower()
+                                    if body_fingerprint in body:
+                                        results['subdomain_takeovers'].append({
+                                            'subdomain': subdomain,
+                                            'cname':     cname_target,
+                                            'service':   service,
+                                            'severity':  'CRITICAL',
+                                            'status':    resp.status,
+                                            'detail':    f'CNAME points to unclaimed {service} — takeover possible',
+                                        })
+                                        logger.warning(f"🚨 Subdomain takeover [{service}]: {subdomain} → {cname_target}")
+                                        break
+                                    elif resp.status in (404, 410):
+                                        # Inconclusive — CNAME matches but body not fingerprinted
+                                        results['subdomain_takeovers'].append({
+                                            'subdomain': subdomain,
+                                            'cname':     cname_target,
+                                            'service':   service,
+                                            'severity':  'MEDIUM',
+                                            'status':    resp.status,
+                                            'detail':    f'CNAME to {service} returned {resp.status} — verify manually',
+                                        })
+                                        break
+                                break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    break  # matched one service for this subdomain — move on
+            except Exception:
+                pass
+
+        logger.info(f"✅ Subdomain takeover: {len(results['subdomain_takeovers'])} findings")
+
+        # ------------------------------------------------------------------ #
+        # F) Cloud Storage Bucket Enumeration
+        # ------------------------------------------------------------------ #
+        # Generate bucket name variants from target domain
+        base = target.split('.')[0]  # e.g. "firstquality" from "firstquality.com"
+        bucket_variants = [
+            base, f"{base}-backup", f"{base}-assets", f"{base}-static",
+            f"{base}-files", f"{base}-dev", f"{base}-staging", f"{base}-prod",
+            f"{base}-data", f"{base}-uploads", f"{base}-media", f"{base}-public",
+        ]
+
+        BUCKET_ENDPOINTS = [
+            # (provider, url_template, open_read_indicator, open_write_indicator)
+            ('AWS S3',          'https://{bucket}.s3.amazonaws.com',                '<?xml',       None),
+            ('AWS S3 (path)',   'https://s3.amazonaws.com/{bucket}',                '<?xml',       None),
+            ('Google GCS',      'https://storage.googleapis.com/{bucket}',          '<?xml',       None),
+            ('Azure Blob',      'https://{bucket}.blob.core.windows.net',           '<?xml',       None),
+            ('Azure Blob',      'https://{bucket}.blob.core.windows.net/?comp=list','<?xml',       None),
+        ]
+
+        for bucket_name in bucket_variants:
+            for provider, url_template, read_indicator, _ in BUCKET_ENDPOINTS:
+                url = url_template.format(bucket=bucket_name)
+                try:
+                    async with self.session.get(url, timeout=6, ssl=True, allow_redirects=True) as resp:
+                        if resp.status == 200:
+                            body = (await resp.text())[:1000]
+                            if read_indicator and read_indicator.lower() in body.lower():
+                                results['open_buckets'].append({
+                                    'url':      url,
+                                    'bucket':   bucket_name,
+                                    'provider': provider,
+                                    'access':   'PUBLIC READ',
+                                    'severity': 'CRITICAL',
+                                    'detail':   f'{provider} bucket publicly readable — data exposure risk',
+                                })
+                                logger.warning(f"🪣 Open bucket [CRITICAL]: {url}")
+                        elif resp.status == 403:
+                            # Bucket exists but private — just note it, don't count as finding
+                            results['open_buckets'].append({
+                                'url':      url,
+                                'bucket':   bucket_name,
+                                'provider': provider,
+                                'access':   'PRIVATE',
+                                'severity': 'INFO',
+                                'detail':   f'{provider} bucket exists but access denied',
+                            })
+                        # Check for public write (PUT)
+                        elif resp.status == 405 or resp.status == 200:
+                            pass  # already handled above
+                except Exception:
+                    pass
+            await asyncio.sleep(0.05)
+
+        logger.info(f"✅ Bucket enumeration: {len([b for b in results['open_buckets'] if b['severity'] == 'CRITICAL'])} public, {len([b for b in results['open_buckets'] if b['severity'] == 'INFO'])} private")
+
+        # ------------------------------------------------------------------ #
+        # G) CAA record missing
+        # ------------------------------------------------------------------ #
+        caa_records = data.dns_records.get('CAA', [])
+        if not caa_records:
+            results['exposed_files'].append({
+                'url':      f"dns://{target}",
+                'status':   0,
+                'severity': 'MEDIUM',
+                'size':     0,
+                'desc':     'CAA record missing — any Certificate Authority can issue SSL certs for this domain',
+                'preview':  'Add CAA record: e.g. "0 issue letsencrypt.org" to restrict cert issuance',
+            })
+            logger.warning(f"⚠️ CAA record missing for {target} [MEDIUM]")
+
+        # ------------------------------------------------------------------ #
+        # H) Dangerous open ports
+        # ------------------------------------------------------------------ #
+        DANGEROUS_OPEN_PORTS = [
+            (21,   'FTP',     'HIGH',     'FTP (unencrypted) open — credentials sent in plaintext. Use SFTP/FTPS instead'),
+            (23,   'Telnet',  'CRITICAL', 'Telnet (unencrypted remote access) open — use SSH instead'),
+            (3389, 'RDP',     'HIGH',     'RDP exposed to internet — brute-force and exploit risk'),
+            (5900, 'VNC',     'HIGH',     'VNC exposed to internet — remote desktop access risk'),
+            (2375, 'Docker',  'CRITICAL', 'Docker API (unauthenticated) open — full container takeover risk'),
+        ]
+        results['dangerous_ports'] = []
+        for ip, ports in data.open_ports.items():
+            for port, service, severity, detail in DANGEROUS_OPEN_PORTS:
+                if port in ports:
+                    results['dangerous_ports'].append({
+                        'ip':       ip,
+                        'port':     port,
+                        'service':  service,
+                        'severity': severity,
+                        'detail':   detail,
+                    })
+                    logger.warning(f"🚨 Dangerous port [{severity}]: {service} (port {port}) open on {ip}")
+
+        # ------------------------------------------------------------------ #
+        # Summary
+        # ------------------------------------------------------------------ #
+        all_findings = (
+            results['exposed_files'] +
+            [f for f in results['open_admin_panels'] if not f.get('false_positive')] +
+            results['open_databases'] +
+            results['directory_listing'] +
+            results.get('dangerous_ports', []) +
+            [f for f in results['subdomain_takeovers'] if f['severity'] != 'INFO'] +
+            [f for f in results['open_buckets'] if f['severity'] != 'INFO']
+        )
+        results['summary']['total']    = len(all_findings)
+        results['summary']['critical'] = sum(1 for f in all_findings if f.get('severity') == 'CRITICAL')
+        results['summary']['high']     = sum(1 for f in all_findings if f.get('severity') == 'HIGH')
+        results['summary']['medium']   = sum(1 for f in all_findings if f.get('severity') == 'MEDIUM')
+
+        data.security_misconfigs = results
+        logger.info(
+            f"✅ Misconfig check done — "
+            f"{results['summary']['critical']} CRITICAL, "
+            f"{results['summary']['high']} HIGH, "
+            f"{results['summary']['medium']} MEDIUM"
+        )
 
     # =========================================================================
     # DNStwist (unchanged)
@@ -1652,7 +2330,7 @@ class BSIInfrastructureDiscovery:
         if not DNSTWIST_AVAILABLE:
             return
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             def run_dnstwist_sync():
                 try:
                     return dnstwist.run(domain=target, registered=True, format='null', threads=50)
@@ -1729,6 +2407,16 @@ async def main(domain: str, save_json: bool = True):
     print(f"   Zone Transfer (AXFR):   {'VULNERABLE ⚠️' if data.dns_records.get('AXFR', {}).get('vulnerable') else 'Secure ✅'}")
     print(f"   Cloud Provider:         {data.cloud_provider or 'Not detected'}")
     print(f"   IP Reputation Checked:  {len(data.ip_reputation)}")
+    mc_summary = data.security_misconfigs.get('summary', {})
+    mc         = data.security_misconfigs
+    print(f"   Security Misconfigs:    {mc_summary.get('total', 0)} findings")
+    print(f"   — Critical:             {mc_summary.get('critical', 0)}")
+    print(f"   — High:                 {mc_summary.get('high', 0)}")
+    print(f"   — Medium:               {mc_summary.get('medium', 0)}")
+    takeovers   = [t for t in mc.get('subdomain_takeovers', []) if t['severity'] == 'CRITICAL']
+    pub_buckets = [b for b in mc.get('open_buckets', [])        if b['severity'] == 'CRITICAL']
+    print(f"   Subdomain Takeovers:    {len(takeovers)} confirmed")
+    print(f"   Public Cloud Buckets:   {len(pub_buckets)} found")
 
     if save_json:
         path = save_infra_report(data)

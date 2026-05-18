@@ -16,22 +16,36 @@ import subprocess
 import sys
 import os
 from typing import Dict, Any, Optional
-from Correlation import AIPhase4Scanner
-from gemini_config import GEMINI_API_KEYS
-import glob, os, re
+import glob, re
 import graphviz
 import tempfile
 import pandas as pd
-import tempfile
 import shutil
-from dotenv import load_dotenv  # pip install python-dotenv
-import os
-from spiderfoot_parser import parse_spiderfoot_csv, get_section_counts
+from dotenv import load_dotenv
 
 load_dotenv()
 
-# Add this line at the top with your other imports
-from riskassessment import RiskAssessmentEngine
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import from new modular structure
+try:
+    from config.gemini_config import GEMINI_API_KEYS
+    from phases.phase4_correlation import AIPhase4Scanner
+    from phases.phase5_risk import RiskAssessmentEngine
+    from phases.phase1_business import CompanyIntelligenceAnalyzer
+    from phases.phase2_infrastructure import BSIInfrastructureDiscovery
+    from phases.phase3_application import CompleteBSIScanner
+    from utils.parsers import parse_spiderfoot_csv, get_section_counts
+    from core.database import get_db_manager
+    from ui.search_history import SearchHistoryUI
+    from services.data_streamer import DataStreamer, StreamingProgressTracker
+    from display_validators import validate_and_normalize_phase_data
+    from simple_display import (display_business_domain_simple, display_infrastructure_simple,
+                                display_application_simple, display_correlation_simple, display_risk_simple)
+except ImportError as e:
+    st.error(f"Required modules not found: {e}")
+    st.stop()
 
 # Page configuration
 st.set_page_config(
@@ -40,15 +54,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Import analysis modules
-try:
-    from bsi_domain import CompanyIntelligenceAnalyzer
-    from bsi_infra import BSIInfrastructureDiscovery
-    from webtech import CompleteBSIScanner 
-except ImportError:
-    st.error("Required modules not found. Please ensure bsi_domain.py, bsi_infra.py, and webtech.py are in the same directory.")
-    st.stop()
 
 class BSIOrchestrator:
     """Orchestrates parallel execution of BSI analysis phases"""
@@ -4656,12 +4661,59 @@ def main():
         st.text("• Ollama with qwen3:4b and Gemini AI")
         st.text("• Python 3.8+")
         st.text("• Internet connection")
+        
+        # Search History Section
+        st.markdown("---")
+        st.markdown("### 📋 Search History")
+        
+        search_ui = SearchHistoryUI()
+        
+        # Search bar
+        search_query = st.text_input(
+            "🔍 Search domains",
+            placeholder="example.com",
+            key="sidebar_search"
+        )
+        
+        if search_query:
+            search_results = search_ui.search_domains(search_query)
+            if search_results:
+                st.success(f"Found {len(search_results)} domain(s)")
+                for result in search_results[:5]:
+                    if st.button(f"🔗 {result['domain']}", key=f"search_{result['domain']}", use_container_width=True):
+                        st.session_state['selected_domain'] = result['domain']
+                        st.rerun()
+            else:
+                st.warning("No domains found")
+        else:
+            # Show recent searches
+            st.markdown("**Recent Searches:**")
+            recent = search_ui.get_recent_searches(limit=5)
+            if recent:
+                for record in recent:
+                    domain = record['domain']
+                    status = record['status']
+                    status_icon = "✅" if status == 'completed' else "⏳" if status == 'in_progress' else "⭕"
+                    
+                    if st.button(f"{status_icon} {domain}", key=f"recent_{domain}", use_container_width=True):
+                        st.session_state['selected_domain'] = domain
+                        st.rerun()
+            else:
+                st.info("No search history yet")
     
     # Main input section
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
+        # Check if a domain was selected from search history
+        if 'selected_domain' in st.session_state:
+            default_domain = st.session_state['selected_domain']
+            del st.session_state['selected_domain']
+        else:
+            default_domain = ""
+        
         domain = st.text_input(
             "Enter Domain Name",
+            value=default_domain,
             placeholder="example.com",
             help="Enter the domain you want to analyze (e.g., amazon.com, google.com)"
         )
@@ -4674,6 +4726,52 @@ def main():
             st.session_state.clear()
             st.rerun()
     
+    # Check if domain was selected from history and load from database
+    if domain and not analyze_button and 'bsi_results' not in st.session_state:
+        domain_clean = domain.strip().lower().replace('http://', '').replace('https://', '').replace('www.', '').split('/')[0]
+        if '.' in domain_clean:
+            db = get_db_manager()
+            existing_analysis = db.get_analysis(domain_clean)
+            if existing_analysis and existing_analysis['status'] == 'completed':
+                # Load from database
+                st.info(f"📦 Loading cached analysis for **{domain_clean}**...")
+                phases = db.get_all_phase_results(existing_analysis['id'])
+                
+                # Reconstruct results from database
+                results = {
+                    'business_domain': None,
+                    'infrastructure': None,
+                    'application_landscape': None,
+                    'correlation_analysis': None,
+                    'risk_assessment': None,
+                    'timestamp': existing_analysis['updated_at'],
+                    'status': {
+                        'business_domain': 'completed',
+                        'infrastructure': 'completed',
+                        'application_landscape': 'completed',
+                        'correlation_analysis': 'completed',
+                        'risk_assessment': 'completed'
+                    }
+                }
+                
+                # Map phase data
+                phase_map = {
+                    1: 'business_domain',
+                    2: 'infrastructure',
+                    3: 'application_landscape',
+                    4: 'correlation_analysis',
+                    5: 'risk_assessment'
+                }
+                
+                for phase in phases:
+                    key = phase_map.get(phase['phase_number'])
+                    if key:
+                        results[key] = phase['result_data']
+                
+                st.session_state['bsi_results'] = results
+                st.session_state['analyzed_domain'] = domain_clean
+                st.success(f"✅ Loaded cached analysis for **{domain_clean}**")
+    
     # Analysis execution
     if analyze_button and domain:
         # Validate domain
@@ -4684,121 +4782,210 @@ def main():
             st.error("Please enter a valid domain name (e.g., example.com)")
             return
         
-        # Initialize orchestrator
-        orchestrator = BSIOrchestrator()
+        # Check if analysis already exists and is completed
+        db = get_db_manager()
+        existing_analysis = db.get_analysis(domain)
         
-        # Progress indicators
-        st.markdown("---")
-        progress_container = st.container()
-        
-        with progress_container:
-            st.info(f"🔍 Analyzing domain: **{domain}**")
+        if existing_analysis and existing_analysis['status'] == 'completed':
+            # Load from database instead of re-running
+            st.info(f"📦 Analysis already exists for **{domain}**. Loading from database...")
+            phases = db.get_all_phase_results(existing_analysis['id'])
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                business_progress = st.progress(0)
-                business_status = st.empty()
-                business_status.text("⏳ Starting Business Domain Analysis...")
+            # Reconstruct results from database
+            results = {
+                'business_domain': None,
+                'infrastructure': None,
+                'application_landscape': None,
+                'correlation_analysis': None,
+                'risk_assessment': None,
+                'timestamp': existing_analysis['updated_at'],
+                'status': {
+                    'business_domain': 'completed',
+                    'infrastructure': 'completed',
+                    'application_landscape': 'completed',
+                    'correlation_analysis': 'completed',
+                    'risk_assessment': 'completed'
+                }
+            }
             
-            with col2:
-                infra_progress = st.progress(0)
-                infra_status = st.empty()
-                infra_status.text("⏳ Starting Infrastructure Discovery...")
-
-            with col3:  # ADD THIS
-                app_progress = st.progress(0)
-                app_status = st.empty()
-                app_status.text("⏳ Starting Application Assessment...")
-
-            # ADD THIS (create col4 for Phase 4)
-            with st.container():
-                st.markdown("---")
-                col4 = st.columns(1)[0]
-                with col4:
-                    corr_progress = st.progress(0)
-                    corr_status = st.empty()
-                    corr_status.text("⏳ Waiting for Phase 2 & 3...")
-        
-        # Run parallel analysis
-        with st.spinner("Running comprehensive analysis..."):
-            # Start analysis in background
-            orchestrator.analyze_domain_parallel(domain)
+            # Map phase data
+            phase_map = {
+                1: 'business_domain',
+                2: 'infrastructure',
+                3: 'application_landscape',
+                4: 'correlation_analysis',
+                5: 'risk_assessment'
+            }
             
-            # Update progress based on status
-            max_wait = 900  # 10 minutes max
-            start_time = time.time()
+            for phase in phases:
+                key = phase_map.get(phase['phase_number'])
+                if key:
+                    results[key] = phase['result_data']
             
-            while time.time() - start_time < max_wait:
-                # Check business domain status
-                if orchestrator.results['status']['business_domain'] == 'running':
-                    business_progress.progress(50)
-                    business_status.text("🔄 Analyzing business domain...")
-                elif orchestrator.results['status']['business_domain'] == 'completed':
-                    business_progress.progress(100)
-                    business_status.text("✅ Business analysis complete")
-                elif orchestrator.results['status']['business_domain'] == 'failed':
-                    business_progress.progress(100)
-                    business_status.text("❌ Business analysis failed")
+            st.session_state['bsi_results'] = results
+            st.session_state['analyzed_domain'] = domain
+            st.success(f"✅ Loaded cached analysis for **{domain}**")
+        else:
+            # Run new analysis
+            analysis_id = db.create_analysis(domain, notes="Analysis started via BSI app")
+            db.add_to_search_history(domain, analysis_id=analysis_id, status='in_progress', completion_percentage=0)
+            
+            # Initialize search history UI for status updates
+            search_ui = SearchHistoryUI()
+            
+            # Initialize orchestrator
+            orchestrator = BSIOrchestrator()
+            
+            # Progress indicators
+            st.markdown("---")
+            progress_container = st.container()
+            
+            with progress_container:
+                st.info(f"🔍 Analyzing domain: **{domain}**")
                 
-                # Check infrastructure status
-                if orchestrator.results['status']['infrastructure'] == 'running':
-                    infra_progress.progress(50)
-                    infra_status.text("🔄 Discovering infrastructure...")
-                elif orchestrator.results['status']['infrastructure'] == 'completed':
-                    infra_progress.progress(100)
-                    infra_status.text("✅ Infrastructure discovery complete")
-                elif orchestrator.results['status']['infrastructure'] == 'failed':
-                    infra_progress.progress(100)
-                    infra_status.text("❌ Infrastructure discovery failed")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    business_progress = st.progress(0)
+                    business_status = st.empty()
+                    business_status.text("⏳ Starting Business Domain Analysis...")
+                
+                with col2:
+                    infra_progress = st.progress(0)
+                    infra_status = st.empty()
+                    infra_status.text("⏳ Starting Infrastructure Discovery...")
 
-                
-                # Check application assessment status  # ADD THIS ENTIRE BLOCK
-                if orchestrator.results['status']['application_landscape'] == 'running':
-                    app_progress.progress(50)
-                    app_status.text("🔄 Analyzing applications...")
-                elif orchestrator.results['status']['application_landscape'] == 'completed':
-                    app_progress.progress(100)
-                    app_status.text("✅ Application assessment complete")
-                elif orchestrator.results['status']['application_landscape'] == 'failed':
-                    app_progress.progress(100)
-                    app_status.text("❌ Application assessment failed")
+                with col3:  # ADD THIS
+                    app_progress = st.progress(0)
+                    app_status = st.empty()
+                    app_status.text("⏳ Starting Application Assessment...")
 
+                # ADD THIS (create col4 for Phase 4)
+                with st.container():
+                    st.markdown("---")
+                    col4 = st.columns(1)[0]
+                    with col4:
+                        corr_progress = st.progress(0)
+                        corr_status = st.empty()
+                        corr_status.text("⏳ Waiting for Phase 2 & 3...")
+            
+            # Run parallel analysis with data streaming
+            streamer = DataStreamer(analysis_id, domain)
+            
+            with st.spinner("Running comprehensive analysis..."):
+                # Start analysis in background
+                orchestrator.analyze_domain_parallel(domain)
                 
-                # Check correlation status (ADD THIS)
-                if orchestrator.results['status']['correlation_analysis'] == 'running':
-                    corr_progress.progress(50)
-                    corr_status.text("🔄 Correlating vulnerabilities...")
-                elif orchestrator.results['status']['correlation_analysis'] == 'completed':
-                    corr_progress.progress(100)
-                    corr_status.text("✅ Correlation analysis complete")
-                elif orchestrator.results['status']['correlation_analysis'] == 'failed':
-                    corr_progress.progress(100)
-                    corr_status.text("❌ Correlation analysis failed")
+                # Stream results as they complete
+                phase_names = {
+                    1: 'Business Domain',
+                    2: 'Infrastructure Discovery',
+                    3: 'Application Landscape',
+                    4: 'Correlation Analysis',
+                    5: 'Risk Assessment'
+                }
+                
+                # Update progress based on status
+                max_wait = 900  # 10 minutes max
+                start_time = time.time()
+                last_streamed = {}
+                
+                while time.time() - start_time < max_wait:
+                    # Check each phase and stream data if available
+                    for phase_num in range(1, 6):
+                        phase_key = {
+                            1: 'business_domain',
+                            2: 'infrastructure',
+                            3: 'application_landscape',
+                            4: 'correlation_analysis',
+                            5: 'risk_assessment'
+                        }[phase_num]
+                        
+                        phase_status = orchestrator.results['status'][phase_key]
+                        phase_data = orchestrator.results[phase_key]
+                        
+                        # Stream data if completed and not yet streamed
+                        if phase_status == 'completed' and phase_num not in last_streamed:
+                            if phase_data and 'error' not in phase_data:
+                                streamer.stream_phase_data(phase_num, phase_names[phase_num], phase_data)
+                                last_streamed[phase_num] = True
+                    
+                    # Check business domain status
+                    if orchestrator.results['status']['business_domain'] == 'running':
+                        business_progress.progress(50)
+                        business_status.text("🔄 Analyzing business domain...")
+                    elif orchestrator.results['status']['business_domain'] == 'completed':
+                        business_progress.progress(100)
+                        business_status.text("✅ Business analysis complete")
+                    elif orchestrator.results['status']['business_domain'] == 'failed':
+                        business_progress.progress(100)
+                        business_status.text("❌ Business analysis failed")
+                    
+                    # Check infrastructure status
+                    if orchestrator.results['status']['infrastructure'] == 'running':
+                        infra_progress.progress(50)
+                        infra_status.text("🔄 Discovering infrastructure...")
+                    elif orchestrator.results['status']['infrastructure'] == 'completed':
+                        infra_progress.progress(100)
+                        infra_status.text("✅ Infrastructure discovery complete")
+                    elif orchestrator.results['status']['infrastructure'] == 'failed':
+                        infra_progress.progress(100)
+                        infra_status.text("❌ Infrastructure discovery failed")
 
-                # Check Phase 5 status
-                if orchestrator.results['status']['risk_assessment'] == 'running':
-                    st.info("📊 Running risk assessment...")
-                elif orchestrator.results['status']['risk_assessment'] == 'completed':
-                    st.success("✅ Risk assessment complete")
-                elif orchestrator.results['status']['risk_assessment'] == 'failed':
-                    st.error("❌ Risk assessment failed")
+                    
+                    # Check application assessment status  # ADD THIS ENTIRE BLOCK
+                    if orchestrator.results['status']['application_landscape'] == 'running':
+                        app_progress.progress(50)
+                        app_status.text("🔄 Analyzing applications...")
+                    elif orchestrator.results['status']['application_landscape'] == 'completed':
+                        app_progress.progress(100)
+                        app_status.text("✅ Application assessment complete")
+                    elif orchestrator.results['status']['application_landscape'] == 'failed':
+                        app_progress.progress(100)
+                        app_status.text("❌ Application assessment failed")
 
-                
-                # Check if both completed
-                if (orchestrator.results['status']['business_domain'] in ['completed', 'failed'] and
-                    orchestrator.results['status']['infrastructure'] in ['completed', 'failed'] and
-                    orchestrator.results['status']['application_landscape'] in ['completed', 'failed'] and
-                    orchestrator.results['status']['correlation_analysis'] in ['completed', 'failed'] and
-                    orchestrator.results['status']['risk_assessment'] in ['completed', 'failed']):
-                    break
-                
-                time.sleep(2)
-        
-        # Store results in session state
-        st.session_state['bsi_results'] = orchestrator.results
-        st.session_state['analyzed_domain'] = domain
-        
-        st.success(f"✅ Analysis completed for **{domain}**")
+                    
+                    # Check correlation status (ADD THIS)
+                    if orchestrator.results['status']['correlation_analysis'] == 'running':
+                        corr_progress.progress(50)
+                        corr_status.text("🔄 Correlating vulnerabilities...")
+                    elif orchestrator.results['status']['correlation_analysis'] == 'completed':
+                        corr_progress.progress(100)
+                        corr_status.text("✅ Correlation analysis complete")
+                    elif orchestrator.results['status']['correlation_analysis'] == 'failed':
+                        corr_progress.progress(100)
+                        corr_status.text("❌ Correlation analysis failed")
+
+                    # Check Phase 5 status
+                    if orchestrator.results['status']['risk_assessment'] == 'running':
+                        st.info("📊 Running risk assessment...")
+                    elif orchestrator.results['status']['risk_assessment'] == 'completed':
+                        st.success("✅ Risk assessment complete")
+                    elif orchestrator.results['status']['risk_assessment'] == 'failed':
+                        st.error("❌ Risk assessment failed")
+
+                    
+                    # Check if both completed
+                    if (orchestrator.results['status']['business_domain'] in ['completed', 'failed'] and
+                        orchestrator.results['status']['infrastructure'] in ['completed', 'failed'] and
+                        orchestrator.results['status']['application_landscape'] in ['completed', 'failed'] and
+                        orchestrator.results['status']['correlation_analysis'] in ['completed', 'failed'] and
+                        orchestrator.results['status']['risk_assessment'] in ['completed', 'failed']):
+                        break
+                    
+                    time.sleep(2)
+            
+            # Store results in session state
+            st.session_state['bsi_results'] = orchestrator.results
+            st.session_state['analyzed_domain'] = domain
+            
+            # Finalize streaming and mark as complete
+            streamer.finalize()
+            
+            # Results are already saved via streamer, just update final status
+            db.update_analysis_status(analysis_id, 'completed', 100)
+            db.add_to_search_history(domain, analysis_id=analysis_id, status='completed', completion_percentage=100)
+            
+            st.success(f"✅ Analysis completed for **{domain}**")
     
     # ── SpiderFoot Threat Intel – always visible, no BSI scan needed ──────────
     st.markdown("---")
@@ -4851,32 +5038,37 @@ def main():
 
         with tab1:
             if st.session_state['bsi_results']['business_domain']:
-                display_business_domain_results(st.session_state['bsi_results']['business_domain'])
+                validated_data = validate_and_normalize_phase_data(1, st.session_state['bsi_results']['business_domain'])
+                display_business_domain_simple(validated_data)
             else:
                 st.warning("Business domain analysis results not available")
 
         with tab2:
             if st.session_state['bsi_results']['infrastructure']:
-                display_infrastructure_results(st.session_state['bsi_results']['infrastructure'])
+                validated_data = validate_and_normalize_phase_data(2, st.session_state['bsi_results']['infrastructure'])
+                display_infrastructure_simple(validated_data)
             else:
                 st.warning("Infrastructure discovery results not available")
 
         with tab3:
             if st.session_state['bsi_results']['application_landscape']:
-                display_application_landscape_results(st.session_state['bsi_results']['application_landscape'])
+                validated_data = validate_and_normalize_phase_data(3, st.session_state['bsi_results']['application_landscape'])
+                display_application_simple(validated_data)
             else:
                 st.warning("Application landscape assessment results not available")
 
         with tab4:
             if st.session_state['bsi_results']['correlation_analysis']:
-                display_correlation_results(st.session_state['bsi_results']['correlation_analysis'])
+                validated_data = validate_and_normalize_phase_data(4, st.session_state['bsi_results']['correlation_analysis'])
+                display_correlation_simple(validated_data)
             else:
                 st.warning("Correlation analysis results not available")
 
         # Risk Assessment
         with tab5:
             if st.session_state['bsi_results'].get('risk_assessment'):
-                display_risk_assessment_results(st.session_state['bsi_results']['risk_assessment'])
+                validated_data = validate_and_normalize_phase_data(5, st.session_state['bsi_results']['risk_assessment'])
+                display_risk_simple(validated_data)
             else:
                 st.warning("Risk assessment not available yet. Please run complete analysis.")
 

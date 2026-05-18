@@ -10,7 +10,7 @@ import re
 from typing import Dict, Any, List
 from datetime import datetime
 
-from gemini_config import call_gemini as _gemini_call, GEMINI_MODEL, GEMINI_API_KEYS
+from config.gemini_config import call_gemini as _gemini_call, GEMINI_MODEL, GEMINI_API_KEYS
 
 # Fallback to Ollama
 try:

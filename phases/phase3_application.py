@@ -14,12 +14,12 @@ logger = logging.getLogger("webtech-phase3")
 
 # ✅ ADD NEW API CONFIG IMPORT
 try:
-    from bsi_api_config import APPLICATION_LANDSCAPE_APIS
+    from config.api_config import APPLICATION_LANDSCAPE_APIS
     API_CONFIG_AVAILABLE = True
-    print("✅ bsi_api_config loaded - Phase 3 APIs enabled")
+    print("✅ api_config loaded - Phase 3 APIs enabled")
 except ImportError:
     API_CONFIG_AVAILABLE = False
-    print("⚠️ bsi_api_config not found - Phase 3 APIs disabled")
+    print("⚠️ api_config not found - Phase 3 APIs disabled")
 
 class CompleteBSIScanner:
     def __init__(self, domain):
@@ -2684,7 +2684,7 @@ class CompleteBSIScanner:
         Returns: malware detection, verdict, vendor count
         """
         try:
-            from bsi_api_config import APPLICATION_LANDSCAPE_APIS
+            from config.api_config import APPLICATION_LANDSCAPE_APIS
             config = APPLICATION_LANDSCAPE_APIS.get('threat_intel', {}).get('virustotal', {})
             api_key = config.get('api_key')
 
@@ -2732,7 +2732,7 @@ class CompleteBSIScanner:
         Returns: threat level, risk score
         """
         try:
-            from bsi_api_config import APPLICATION_LANDSCAPE_APIS
+            from config.api_config import APPLICATION_LANDSCAPE_APIS
             config = APPLICATION_LANDSCAPE_APIS.get('threat_intel', {}).get('pulsedive', {})
             api_key = config.get('api_key')
             
@@ -2767,7 +2767,7 @@ class CompleteBSIScanner:
         Returns: list of co-hosted domains
         """
         try:
-            from bsi_api_config import APPLICATION_LANDSCAPE_APIS
+            from config.api_config import APPLICATION_LANDSCAPE_APIS
             config = APPLICATION_LANDSCAPE_APIS.get('dns', {}).get('viewdns', {})
             apikey = config.get('api_key', '')
             url = f"https://api.viewdns.net/reverseip/?ip={ip}&apikey={apikey}&output=json"

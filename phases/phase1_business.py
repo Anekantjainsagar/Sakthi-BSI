@@ -25,12 +25,12 @@ load_dotenv()
 
 # Import centralized API config
 try:
-    from bsi_api_config import BUSINESS_DOMAIN_APIS
+    from config.api_config import BUSINESS_DOMAIN_APIS
     API_CONFIG_AVAILABLE = True
     print("✅ API Config loaded successfully")
 except ImportError:
     API_CONFIG_AVAILABLE = False
-    print("⚠ bsi_api_config.py not found. Using fallback mode.")
+    print("⚠ api_config.py not found. Using fallback mode.")
 
 # Try multiple whois libraries
 try:
@@ -39,7 +39,7 @@ try:
 except ImportError:
     WHOIS_AVAILABLE = False
 
-from gemini_config import call_gemini as _gemini_call, GEMINI_MODEL, GEMINI_API_KEYS
+from config.gemini_config import call_gemini as _gemini_call, GEMINI_MODEL, GEMINI_API_KEYS
 
 # GEMINI_AVAILABLE derived from gemini_config — no direct genai import needed
 GEMINI_AVAILABLE = len(GEMINI_API_KEYS) > 0
