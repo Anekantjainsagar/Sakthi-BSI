@@ -25,7 +25,7 @@ class CacheManager:
             ttl_hours: Time-to-live for cache entries in hours (24-48)
         """
         self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.ttl = timedelta(hours=ttl_hours)
         logger.info(f"✅ Cache manager initialized: {cache_dir} (TTL: {ttl_hours}h)")
     
