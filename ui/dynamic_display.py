@@ -268,77 +268,133 @@ class Phase4Display(DynamicDisplayTemplate):
             st.error(f"Phase 4 failed: {data.get('error', 'Unknown error')}")
             return
         
+        # Extract CVEs and calculate severity counts
+        cves = data.get('cves', [])
+        critical_count = sum(1 for c in cves if c.get('severity') == 'CRITICAL')
+        high_count = sum(1 for c in cves if c.get('severity') == 'HIGH')
+        medium_count = sum(1 for c in cves if c.get('severity') == 'MEDIUM')
+        low_count = sum(1 for c in cves if c.get('severity') == 'LOW')
+        total_vulns = len(cves)
+        
+        # Calculate risk score based on CVE severity distribution
+        risk_score = min(100, (critical_count * 25 + high_count * 15 + medium_count * 5 + low_count * 1) / max(1, total_vulns))
+        
         # Risk score and summary
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            risk_score = data.get('overall_risk_score', 0)
-            st.metric("Risk Score", f"{risk_score}/100")
+            st.metric("Risk Score", f"{int(risk_score)}/100")
         
         with col2:
-            summary = data.get('summary', {})
-            total_vulns = summary.get('total', 0)
-            st.metric("Total Vulnerabilities", total_vulns)
+            st.metric("Total Vulns", total_vulns)
         
         with col3:
-            critical = summary.get('critical_count', 0)
-            st.metric("Critical", critical, delta=None, delta_color="off")
+            st.metric("🔴 Critical", critical_count)
         
         with col4:
-            high = summary.get('high_count', 0)
-            st.metric("High", high, delta=None, delta_color="off")
+            st.metric("🟠 High", high_count)
+        
+        with col5:
+            st.metric("Risk Level", "🔴 CRITICAL" if risk_score >= 80 else "🟠 HIGH" if risk_score >= 60 else "🟡 MEDIUM" if risk_score >= 40 else "🟢 LOW")
         
         st.divider()
         
         # Vulnerability breakdown
         col1, col2, col3 = st.columns(3)
         with col1:
-            medium = summary.get('medium_count', 0)
-            st.metric("Medium", medium)
+            st.metric("🟡 Medium", medium_count)
         with col2:
-            low = summary.get('low_count', 0)
-            st.metric("Low", low)
+            st.metric("🟢 Low", low_count)
         with col3:
-            st.metric("Risk Level", "🔴 Critical" if risk_score >= 80 else "🟠 High" if risk_score >= 60 else "🟡 Medium" if risk_score >= 40 else "🟢 Low")
+            security_issues = data.get('security_issues', [])
+            st.metric("Security Issues", len(security_issues))
         
         st.divider()
         
         # Detailed sections
-        tabs = st.tabs(["Vulnerabilities", "MITRE Mapping", "Threat Actors", "Attack Chains"])
+        tabs = st.tabs(["CVE Details", "Security Issues", "Threat Intelligence", "Attack Vectors"])
         
         with tabs[0]:
-            vulns = data.get('vulnerabilities', [])
-            if vulns:
-                st.write(f"**Found {len(vulns)} vulnerabilities:**")
-                for vuln in vulns[:10]:
-                    severity = vuln.get('severity', 'Unknown')
-                    severity_icon = "🔴" if severity == "Critical" else "🟠" if severity == "High" else "🟡" if severity == "Medium" else "🟢"
-                    st.write(f"{severity_icon} **{vuln.get('title', 'Unknown')}** - {severity}")
-                if len(vulns) > 10:
-                    st.info(f"... and {len(vulns) - 10} more vulnerabilities")
+            st.subheader("📋 Vulnerability Details")
+            if cves:
+                st.write(f"**Found {len(cves)} CVEs:**")
+                
+                # Group by severity
+                for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+                    severity_cves = [c for c in cves if c.get('severity') == severity]
+                    if severity_cves:
+                        severity_icon = "🔴" if severity == "CRITICAL" else "🟠" if severity == "HIGH" else "🟡" if severity == "MEDIUM" else "🟢"
+                        with st.expander(f"{severity_icon} {severity} ({len(severity_cves)})"):
+                            for cve in severity_cves:
+                                col1, col2 = st.columns([1, 4])
+                                with col1:
+                                    st.write(f"**{cve.get('cve', 'N/A')}**")
+                                with col2:
+                                    st.write(f"CVSS: {cve.get('cvss', 'N/A')}")
+                                    st.write(f"**{cve.get('tech', 'Unknown')}** {cve.get('version', '')}")
+                                    st.write(f"CWE: {cve.get('cwe', 'N/A')}")
+                                    st.write(cve.get('description', 'No description'))
+                                st.divider()
             else:
-                st.info("No vulnerabilities found")
+                st.info("No CVEs found")
         
         with tabs[1]:
-            Phase4Display.render_section("MITRE Mapping", data.get('mitre_mapping', {}), "🎯")
+            st.subheader("🔍 Security Issues & Misconfigurations")
+            security_issues = data.get('security_issues', [])
+            if security_issues:
+                st.write(f"**Found {len(security_issues)} security issues:**")
+                for issue in security_issues:
+                    if isinstance(issue, dict):
+                        st.write(f"• **{issue.get('title', 'Unknown')}** - {issue.get('severity', 'Unknown')}")
+                        st.write(f"  {issue.get('description', '')}")
+                    else:
+                        st.write(f"• {issue}")
+            else:
+                st.info("No security issues found")
         
         with tabs[2]:
-            threat_actors = data.get('threat_actors', [])
-            if threat_actors:
-                st.write(f"**Identified {len(threat_actors)} threat actors:**")
-                for actor in threat_actors:
-                    st.write(f"• {actor}")
+            st.subheader("🎯 Threat Intelligence")
+            threat_intel = data.get('threat_intel', {})
+            if threat_intel:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Sector:** {threat_intel.get('sector', 'Unknown')}")
+                    st.write(f"**Company Size:** {threat_intel.get('company_size', 'Unknown')}")
+                with col2:
+                    st.write(f"**Industry:** {threat_intel.get('industry', 'Unknown')}")
+                    st.write(f"**Compliance:** {', '.join(threat_intel.get('compliance', []))}")
+                
+                st.write("**Threat Actors:**")
+                threat_actors = threat_intel.get('threat_actors', [])
+                if threat_actors:
+                    for actor in threat_actors:
+                        st.write(f"• {actor}")
+                else:
+                    st.write("No specific threat actors identified")
             else:
-                st.info("No threat actors identified")
+                st.info("No threat intelligence available")
         
         with tabs[3]:
-            attack_chains = data.get('attack_chains', [])
-            if attack_chains:
-                st.write(f"**Found {len(attack_chains)} attack chains:**")
-                for chain in attack_chains:
-                    st.write(f"• {chain}")
+            st.subheader("⚔️ Attack Vectors & Exploitation Chains")
+            attack_vectors = data.get('attack_vectors', [])
+            if attack_vectors:
+                st.write(f"**Identified {len(attack_vectors)} attack vectors:**")
+                for i, vector in enumerate(attack_vectors, 1):
+                    if isinstance(vector, dict):
+                        with st.expander(f"Attack Vector {i}: {vector.get('name', 'Unknown')}"):
+                            st.write(f"**Entry Point:** {vector.get('entry_point', 'N/A')}")
+                            st.write(f"**Difficulty:** {vector.get('difficulty', 'N/A')}/10")
+                            st.write(f"**Impact:** {vector.get('impact', 'N/A')}")
+                            
+                            chain = vector.get('exploitation_chain', [])
+                            if chain:
+                                st.write("**Exploitation Chain:**")
+                                for step in chain:
+                                    st.write(f"  {step}")
+                    else:
+                        st.write(f"• {vector}")
             else:
-                st.info("No attack chains identified")
+                st.info("No attack vectors identified")
 
 
 class Phase5Display(DynamicDisplayTemplate):
@@ -353,68 +409,191 @@ class Phase5Display(DynamicDisplayTemplate):
             st.error(f"Phase 5 failed: {data.get('error', 'Unknown error')}")
             return
         
-        # Risk overview
-        risk_overview = data.get('risk_overview', {})
+        # Extract risk data from proper structure
+        multidim_score = data.get('multidimensional_score', {})
+        risk_matrix = data.get('risk_matrix', {})
+        business_risk = data.get('business_risk', {})
+        infra_risk = data.get('infrastructure_risk', {})
+        app_risk = data.get('application_risk', {})
+        business_impact = data.get('business_impact', {})
         
+        # Calculate overall risk level
+        overall_score = multidim_score.get('overall_score', 0)
+        risk_level = "🔴 CRITICAL" if overall_score >= 80 else "🟠 HIGH" if overall_score >= 60 else "🟡 MEDIUM" if overall_score >= 40 else "🟢 LOW"
+        
+        # Risk overview metrics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            risk_level = risk_overview.get('overall_risk_level', 'Unknown')
-            risk_icon = "🔴" if risk_level == "Critical" else "🟠" if risk_level == "High" else "🟡" if risk_level == "Medium" else "🟢"
-            st.metric("Risk Level", f"{risk_icon} {risk_level}")
+            st.metric("Overall Risk", f"{int(overall_score)}/100")
         
         with col2:
-            risk_score = risk_overview.get('risk_score', 0)
-            st.metric("Risk Score", f"{risk_score}/100")
+            st.metric("Risk Level", risk_level)
         
         with col3:
-            exposure = risk_overview.get('exposure_level', 'Unknown')
+            exposure = business_impact.get('exposure_level', 'Unknown')
             st.metric("Exposure", exposure)
         
         with col4:
-            findings = len(risk_overview.get('key_findings', []))
-            st.metric("Key Findings", findings)
+            findings = len(data.get('cves', [])) if 'cves' in data else 0
+            st.metric("Findings", findings)
         
         st.divider()
         
         # Detailed sections
-        tabs = st.tabs(["Overview", "Assets", "Threats", "Compliance", "Business Impact", "Recommendations"])
+        tabs = st.tabs(["Executive Summary", "Risk Breakdown", "Business Impact", "Action Plan", "Threat Actors"])
         
         with tabs[0]:
-            st.subheader("Risk Overview")
-            for finding in risk_overview.get('key_findings', []):
-                st.write(f"• {finding}")
+            st.subheader("📋 Executive Summary")
+            executive_summary = data.get('executive_summary', {})
+            if executive_summary:
+                st.write(f"**Overall Assessment:** {executive_summary.get('overall_assessment', 'N/A')}")
+                st.write(f"**Key Risks:** {executive_summary.get('key_risks', 'N/A')}")
+                st.write(f"**Immediate Actions:** {executive_summary.get('immediate_actions', 'N/A')}")
+            else:
+                st.info("No executive summary available")
         
         with tabs[1]:
-            Phase5Display.render_section("Asset Risks", data.get('asset_risks', []), "🏗️")
+            st.subheader("🎯 Risk Breakdown by Dimension")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.write("**Business Risk**")
+                business_score = business_risk.get('risk_score', 0)
+                business_level = business_risk.get('risk_level', 'Unknown')
+                st.metric("Score", f"{int(business_score)}/100")
+                st.write(f"Level: {business_level}")
+                st.write(f"**Factors:**")
+                for factor in business_risk.get('risk_factors', [])[:3]:
+                    st.write(f"• {factor}")
+            
+            with col2:
+                st.write("**Infrastructure Risk**")
+                infra_score = infra_risk.get('risk_score', 0)
+                infra_level = infra_risk.get('risk_level', 'Unknown')
+                st.metric("Score", f"{int(infra_score)}/100")
+                st.write(f"Level: {infra_level}")
+                st.write(f"**Factors:**")
+                for factor in infra_risk.get('risk_factors', [])[:3]:
+                    st.write(f"• {factor}")
+            
+            with col3:
+                st.write("**Application Risk**")
+                app_score = app_risk.get('risk_score', 0)
+                app_level = app_risk.get('risk_level', 'Unknown')
+                st.metric("Score", f"{int(app_score)}/100")
+                st.write(f"Level: {app_level}")
+                st.write(f"**Factors:**")
+                for factor in app_risk.get('risk_factors', [])[:3]:
+                    st.write(f"• {factor}")
+            
+            st.divider()
+            
+            # Risk Matrix
+            st.write("**Risk Matrix:**")
+            risk_matrix_text = risk_matrix.get('matrix_text', 'N/A')
+            st.code(risk_matrix_text, language="text")
         
         with tabs[2]:
-            Phase5Display.render_section("Threat Landscape", data.get('threat_landscape', {}), "⚔️")
+            st.subheader("💼 Business Impact Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Financial Impact**")
+                st.write(f"Risk: {business_impact.get('financial_risk', 'Unknown')}")
+                st.write(f"Estimated Loss: {business_impact.get('estimated_financial_loss', 'Unknown')}")
+                
+                st.write("**Operational Impact**")
+                st.write(f"Risk: {business_impact.get('operational_impact', 'Unknown')}")
+                st.write(f"Downtime: {business_impact.get('estimated_downtime', 'Unknown')}")
+            
+            with col2:
+                st.write("**Reputational Impact**")
+                st.write(f"Risk: {business_impact.get('reputational_risk', 'Unknown')}")
+                st.write(f"Severity: {business_impact.get('reputational_severity', 'Unknown')}")
+                
+                st.write("**Compliance Impact**")
+                st.write(f"Risk: {business_impact.get('compliance_risk', 'Unknown')}")
+                st.write(f"Frameworks: {', '.join(business_impact.get('affected_frameworks', []))}")
+            
+            st.divider()
+            
+            st.write("**Potential Impact Scenarios:**")
+            scenarios = business_impact.get('impact_scenarios', [])
+            if scenarios:
+                for scenario in scenarios:
+                    st.write(f"• {scenario}")
+            else:
+                st.write("No specific scenarios identified")
         
         with tabs[3]:
-            Phase5Display.render_section("Compliance Status", data.get('compliance_status', {}), "✅")
+            st.subheader("🛠️ Action Plan & Remediation")
+            action_plan = data.get('action_plan', {})
+            
+            if action_plan:
+                # Immediate actions
+                immediate = action_plan.get('immediate_actions', [])
+                if immediate:
+                    st.write("**🚨 Immediate Actions (0-7 days):**")
+                    for action in immediate:
+                        if isinstance(action, dict):
+                            st.write(f"• **{action.get('action', 'N/A')}**")
+                            st.write(f"  Priority: {action.get('priority', 'N/A')}")
+                            st.write(f"  Effort: {action.get('effort', 'N/A')}")
+                        else:
+                            st.write(f"• {action}")
+                
+                # Short-term actions
+                short_term = action_plan.get('short_term_actions', [])
+                if short_term:
+                    st.write("**📅 Short-term Actions (1-4 weeks):**")
+                    for action in short_term:
+                        if isinstance(action, dict):
+                            st.write(f"• **{action.get('action', 'N/A')}**")
+                            st.write(f"  Priority: {action.get('priority', 'N/A')}")
+                        else:
+                            st.write(f"• {action}")
+                
+                # Long-term actions
+                long_term = action_plan.get('long_term_actions', [])
+                if long_term:
+                    st.write("**🎯 Long-term Actions (1-6 months):**")
+                    for action in long_term:
+                        if isinstance(action, dict):
+                            st.write(f"• **{action.get('action', 'N/A')}**")
+                            st.write(f"  Priority: {action.get('priority', 'N/A')}")
+                        else:
+                            st.write(f"• {action}")
+            else:
+                st.info("No action plan available")
         
         with tabs[4]:
-            business_impact = data.get('business_impact', {})
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Financial Risk", business_impact.get('financial_risk', 'Unknown'))
-                st.metric("Operational Impact", business_impact.get('operational_impact', 'Unknown'))
-            with col2:
-                st.metric("Reputational Risk", business_impact.get('reputational_risk', 'Unknown'))
-                st.write(f"**Potential Impact:** {business_impact.get('potential_impact', 'Unknown')}")
-        
-        with tabs[5]:
-            recommendations = data.get('recommendations', [])
-            if recommendations:
-                st.write(f"**{len(recommendations)} Recommendations:**")
-                for rec in recommendations:
-                    priority = rec.get('priority', 'Unknown')
-                    priority_icon = "🚨" if priority == "Critical" else "🔴" if priority == "High" else "🟡" if priority == "Medium" else "🟢"
-                    st.write(f"{priority_icon} **{rec.get('title', 'Unknown')}** ({rec.get('timeline', 'N/A')})")
-                    st.write(f"   {rec.get('description', '')}")
+            st.subheader("🎭 Threat Actor Profile")
+            threat_profile = data.get('threat_actor_profile', {})
+            
+            if threat_profile:
+                threat_actors = threat_profile.get('threat_actors', [])
+                if threat_actors:
+                    st.write(f"**Identified {len(threat_actors)} Threat Actors:**")
+                    for i, actor in enumerate(threat_actors, 1):
+                        with st.expander(f"{i}. {actor.get('name', 'Unknown')} (Risk: {actor.get('risk_score', 'N/A')}/10)"):
+                            st.write(f"**Type:** {actor.get('type', 'Unknown')}")
+                            st.write(f"**Motivation:** {actor.get('motivation', 'Unknown')}")
+                            st.write(f"**Capabilities:** {actor.get('capabilities', 'Unknown')}")
+                            st.write(f"**Why They Target This Organization:**")
+                            st.write(actor.get('targeting_rationale', 'N/A'))
+                            
+                            st.write(f"**Technical Alignment:**")
+                            st.write(actor.get('technical_alignment', 'N/A'))
+                            
+                            st.write(f"**Historical Context:**")
+                            st.write(actor.get('historical_context', 'N/A'))
+                else:
+                    st.info("No threat actors identified")
             else:
-                st.info("No recommendations available")
+                st.info("No threat actor profile available")
 
 
 def render_phase_data(phase_num: int, data: Dict[str, Any]):

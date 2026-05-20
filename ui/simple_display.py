@@ -448,6 +448,93 @@ def display_application_simple(data: Dict[str, Any]):
 
 # ── Phase 4: Vulnerability Correlation ───────────────────────────────────────
 
+def _build_attack_chains_from_data(vulns: List[Dict], security_issues: List[Dict]) -> List[Dict]:
+    """
+    Build attack chains from vulnerability and security issue data.
+    Groups related findings into realistic attack scenarios showing HOW
+    the agent discovered and correlated each vulnerability.
+    """
+    chains = []
+
+    # ── Chain 1: Remote Code Execution via exposed services + CVEs ──
+    rce_vulns = [v for v in vulns if isinstance(v, dict) and
+                 (v.get("attack_type") == "Remote Code Execution" or
+                  (v.get("cvss", 0) >= 9.0 and "RCE" in str(v.get("desc", ""))))]
+    exposed_services = [s for s in security_issues if isinstance(s, dict) and
+                        "Exposed Service" in s.get("type", "")]
+    if rce_vulns or exposed_services:
+        steps = []
+        # Reconnaissance step
+        steps.append("Reconnaissance: Agent scanned all subdomains and IP addresses, identifying open ports and running services via Shodan/Censys correlation")
+        # Service exposure
+        for svc in exposed_services[:3]:
+            steps.append(f"Service Discovery: {svc.get('header', svc.get('type', ''))} found exposed — {svc.get('description', '')}")
+        # CVE correlation
+        for v in rce_vulns[:2]:
+            steps.append(f"CVE Correlation: {v.get('cve', v.get('cwe', 'N/A'))} matched to {v.get('tech', 'detected technology')} {v.get('version', '')} (CVSS {v.get('cvss', 'N/A')}) — {v.get('desc', '')[:120]}")
+        steps.append("Exploit Path: Attacker can leverage exposed service + unpatched CVE to achieve unauthenticated remote code execution")
+        steps.append("Impact: Full server compromise, lateral movement to internal network, data exfiltration")
+        chains.append({"name": "Remote Code Execution via Exposed Services", "severity": "Critical", "steps": steps})
+
+    # ── Chain 2: Credential theft via exposed files ──
+    cred_issues = [s for s in security_issues if isinstance(s, dict) and
+                   any(x in s.get("type", "") for x in ["Exposed Sensitive File", "Exposed File"])]
+    cred_vulns = [v for v in vulns if isinstance(v, dict) and
+                  v.get("attack_type") in ("Credential Theft", "Data Theft")]
+    if cred_issues or cred_vulns:
+        steps = []
+        steps.append("Reconnaissance: Agent crawled all discovered subdomains for sensitive file paths (backup archives, config files, .git directories)")
+        for issue in cred_issues[:3]:
+            steps.append(f"File Discovery: {issue.get('header', '')} — {issue.get('description', '')} (Severity: {issue.get('severity', 'N/A')})")
+        for v in cred_vulns[:2]:
+            steps.append(f"Vulnerability Mapping: {v.get('cve', v.get('cwe', 'N/A'))} — {v.get('desc', '')[:120]}")
+        steps.append("Exploit Path: Attacker downloads exposed backup/config files to extract database credentials, API keys, or source code")
+        steps.append("Impact: Database access, credential reuse across services, source code analysis for further vulnerabilities")
+        chains.append({"name": "Credential Theft via Exposed Sensitive Files", "severity": "Critical", "steps": steps})
+
+    # ── Chain 3: Phishing / Email-based attack via missing email security ──
+    email_issues = [s for s in security_issues if isinstance(s, dict) and
+                    any(x in s.get("type", "") for x in ["DMARC", "DKIM", "SPF", "Phishing"])]
+    if email_issues:
+        steps = []
+        steps.append("Reconnaissance: Agent queried DNS records for SPF, DMARC, and DKIM configurations")
+        for issue in email_issues[:3]:
+            steps.append(f"Email Security Gap: {issue.get('type', '')} — {issue.get('description', '')} (Severity: {issue.get('severity', 'N/A')})")
+        steps.append("Exploit Path: Attacker spoofs legitimate company email addresses to send phishing emails to employees or customers — no email authentication to block it")
+        steps.append("Impact: Credential harvesting, business email compromise (BEC), financial fraud via fake invoice attacks")
+        chains.append({"name": "Phishing via Missing Email Authentication", "severity": "High", "steps": steps})
+
+    # ── Chain 4: Dark web / threat intelligence chain ──
+    darkweb_issues = [s for s in security_issues if isinstance(s, dict) and
+                      any(x in s.get("type", "") for x in ["Dark Web", "APT Threat", "Threat Intelligence", "Data Breach"])]
+    if darkweb_issues:
+        steps = []
+        steps.append("Threat Intelligence: Agent queried AlienVault OTX, IntelligenceX, and dark web databases for domain/IP reputation")
+        for issue in darkweb_issues[:3]:
+            steps.append(f"Intel Hit: {issue.get('type', '')} — {issue.get('header', issue.get('description', ''))} (Source: {issue.get('source', 'Threat Intel')})")
+        steps.append("Correlation: Threat intelligence hits indicate prior compromise, active targeting, or leaked credentials already in attacker hands")
+        steps.append("Impact: Attackers may already have valid credentials or internal knowledge — breach may be ongoing or imminent")
+        chains.append({"name": "Active Threat Intelligence Indicators", "severity": "Critical", "steps": steps})
+
+    # ── Chain 5: Database exposure chain ──
+    db_issues = [s for s in security_issues if isinstance(s, dict) and
+                 any(x in s.get("type", "") for x in ["MSSQL", "MySQL", "PostgreSQL", "Database"])]
+    db_vulns = [v for v in vulns if isinstance(v, dict) and
+                any(x in str(v.get("tech", "")) for x in ["SQL", "MySQL", "MSSQL", "PostgreSQL", "Database"])]
+    if db_issues or db_vulns:
+        steps = []
+        steps.append("Port Scanning: Agent identified database ports exposed directly to the internet via Shodan/Censys data")
+        for issue in db_issues[:2]:
+            steps.append(f"Exposed Database: {issue.get('header', '')} — {issue.get('description', '')} (Severity: {issue.get('severity', 'N/A')})")
+        for v in db_vulns[:2]:
+            steps.append(f"CVE Match: {v.get('cve', v.get('cwe', 'N/A'))} — {v.get('desc', '')[:100]}")
+        steps.append("Exploit Path: Attacker connects directly to exposed database port, attempts brute-force or exploits known CVE for unauthenticated access")
+        steps.append("Impact: Full database dump, PII exfiltration, ransomware deployment, regulatory violations (GDPR/HIPAA)")
+        chains.append({"name": "Direct Database Exposure & Exploitation", "severity": "Critical", "steps": steps})
+
+    return chains
+
+
 def display_correlation_simple(data: Dict[str, Any]):
     st.header("🔗 Vulnerability Correlation & Threat Intelligence")
     if not data:
@@ -457,22 +544,110 @@ def display_correlation_simple(data: Dict[str, Any]):
         st.error(f"Phase 4 failed: {data['error']}")
         return
 
-    summary = data.get("summary", {})
-    vulns   = data.get("vulnerabilities", data.get("security_issues", []))
-    mitre   = data.get("mitre_mapping", {})
-    actors  = data.get("threat_actors", [])
-    chains  = data.get("attack_chains", data.get("attack_vectors", []))
-    score   = data.get("overall_risk_score", 0)
-    factors = data.get("risk_factors", [])
+    # ── Normalize data: handle both AIPhase4Scanner schema and VulnerabilityCorrelation schema ──
+    # AIPhase4Scanner produces: security_issues, vulnerabilities, threat_intelligence.apt_groups,
+    #                           attack_vectors (markdown string), cves_all
+    # VulnerabilityCorrelation produces: summary, vulnerabilities, mitre_mapping, threat_actors,
+    #                                    attack_chains, overall_risk_score, risk_factors
 
-    # Summary metrics
+    security_issues = data.get("security_issues", [])
+    if not isinstance(security_issues, list):
+        security_issues = []
+
+    cves_all = data.get("cves_all", data.get("vulnerabilities", []))
+    if not isinstance(cves_all, list):
+        cves_all = []
+
+    # Build summary from actual data if not present
+    summary = data.get("summary", {})
+    if not summary or not isinstance(summary, dict):
+        all_issues = security_issues + cves_all
+        sev_norm = lambda s: str(s).upper()
+        summary = {
+            "critical_count": sum(1 for s in all_issues if isinstance(s, dict) and sev_norm(s.get("severity", "")) == "CRITICAL"),
+            "high_count":     sum(1 for s in all_issues if isinstance(s, dict) and sev_norm(s.get("severity", "")) == "HIGH"),
+            "medium_count":   sum(1 for s in all_issues if isinstance(s, dict) and sev_norm(s.get("severity", "")) == "MEDIUM"),
+            "low_count":      sum(1 for s in all_issues if isinstance(s, dict) and sev_norm(s.get("severity", "")) == "LOW"),
+            "total":          len(all_issues),
+        }
+    else:
+        # Normalize scanner summary keys (critical_cves/high_cves) to display keys (critical_count/high_count)
+        if "critical_count" not in summary and "critical_cves" in summary:
+            summary["critical_count"] = summary["critical_cves"] + summary.get("critical_issues", 0)
+        if "high_count" not in summary and "high_cves" in summary:
+            summary["high_count"] = summary["high_cves"] + summary.get("high_issues", 0)
+        if "medium_count" not in summary:
+            # Compute from issues if not present
+            all_issues = security_issues + cves_all
+            sev_norm = lambda s: str(s).upper()
+            summary["medium_count"] = sum(1 for s in all_issues if isinstance(s, dict) and sev_norm(s.get("severity", "")) == "MEDIUM")
+        if "total" not in summary:
+            summary["total"] = len(security_issues) + len(cves_all)
+
+    # Compute risk score from CVEs if not present
+    score = data.get("overall_risk_score", 0)
+    if not score and cves_all:
+        top_cvss = sorted([v.get("cvss", 0) for v in cves_all if isinstance(v, dict)], reverse=True)
+        score = round(min(sum(top_cvss[:5]) / 5 * 10, 100), 1) if top_cvss else 0
+
+    # Threat actors: try top-level first, then nested under threat_intelligence
+    actors = data.get("threat_actors", [])
+    if not actors or not isinstance(actors, list):
+        threat_intel = data.get("threat_intelligence", {})
+        if isinstance(threat_intel, dict):
+            actors = threat_intel.get("apt_groups", [])
+        if not actors:
+            actors = []
+
+    # Risk factors: build from summary if not present
+    factors = data.get("risk_factors", [])
+    if not factors or not isinstance(factors, list):
+        factors = []
+        if summary.get("critical_count", 0):
+            factors.append(f"{summary['critical_count']} critical severity findings require immediate remediation")
+        if summary.get("high_count", 0):
+            factors.append(f"{summary['high_count']} high severity issues identified across infrastructure and application layers")
+        if summary.get("medium_count", 0):
+            factors.append(f"{summary['medium_count']} medium severity issues contribute to overall attack surface")
+        darkweb = [s for s in security_issues if isinstance(s, dict) and "Dark Web" in s.get("type", "")]
+        if darkweb:
+            factors.append(f"Dark web exposure detected — {darkweb[0].get('description', 'breach records found')}")
+        apt_hits = [s for s in security_issues if isinstance(s, dict) and "APT" in s.get("type", "")]
+        if apt_hits:
+            factors.append(f"APT threat intelligence hits — {apt_hits[0].get('header', 'IP flagged in threat feeds')}")
+
+    # Attack chains: build from actual vulnerability data
+    chains = data.get("attack_chains", [])
+    if not chains or not isinstance(chains, list) or (isinstance(chains, str)):
+        chains = _build_attack_chains_from_data(cves_all, security_issues)
+
+    # MITRE mapping: try existing, or build from apt_mapping_md / threat_intelligence
+    mitre = data.get("mitre_mapping", {})
+    if not mitre or not isinstance(mitre, dict):
+        # Try to extract from threat_intelligence sector context
+        threat_intel = data.get("threat_intelligence", {})
+        if isinstance(threat_intel, dict) and threat_intel.get("sector"):
+            mitre = {}  # Will be shown via APT groups instead
+
+    # Attack vectors markdown — scanner stores as attack_vectors_md
+    attack_vectors_md = data.get("attack_vectors_md", "")
+    if not attack_vectors_md:
+        # Fallback: check attack_vectors if it's a string
+        av = data.get("attack_vectors", "")
+        if isinstance(av, str) and av.strip():
+            attack_vectors_md = av
+
+    # APT mapping markdown — scanner stores as apt_mapping_md
+    apt_md = data.get("apt_mapping_md", "")
+
+    # ── Summary metrics ──
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Risk Score",  f"{score}/100")
-    c2.metric("Total",       summary.get("total", len(vulns)))
+    c2.metric("Total Issues", summary.get("total", len(security_issues)))
     c3.metric("🔴 Critical", summary.get("critical_count", 0))
     c4.metric("🟠 High",     summary.get("high_count", 0))
     c5.metric("🟡 Medium",   summary.get("medium_count", 0))
-    st.progress(min(score, 100) / 100)
+    st.progress(min(float(score), 100) / 100)
     st.divider()
 
     # Risk factors narrative
@@ -481,22 +656,79 @@ def display_correlation_simple(data: Dict[str, Any]):
             for f in factors:
                 st.markdown(f"• {f}")
 
-    # Vulnerabilities
-    if vulns:
-        with st.expander(f"🚨 Vulnerabilities ({len(vulns)} found)", expanded=True):
-            for v in vulns:
-                sev  = v.get("severity", "Low")
-                icon = _severity_icon(sev)
-                title = v.get("title", "Unknown")
+    # CVEs / Vulnerabilities (from cves_all — the correlated CVE list)
+    if cves_all:
+        with st.expander(f"🔬 Correlated CVEs ({len(cves_all)} found)", expanded=True):
+            for v in cves_all:
+                if not isinstance(v, dict):
+                    continue
+                sev   = v.get("severity", "Low")
+                icon  = _severity_icon(sev)
+                cve   = v.get("cve", v.get("cwe", "N/A"))
+                tech  = v.get("tech", "")
+                ver   = v.get("version", "")
+                cvss  = v.get("cvss", "")
+                desc  = v.get("desc", v.get("description", ""))
                 src   = v.get("source", "")
-                desc  = v.get("description", "")
-                with st.container():
-                    st.markdown(f"{icon} **{title}** — {sev}" + (f"  *(source: {src})*" if src else ""))
-                    if desc:
-                        st.caption(f"  {desc}")
+                label = f"{tech} {ver}".strip() if tech else ""
+                cvss_str = f"CVSS {cvss}" if cvss else ""
+                meta = "  |  ".join(filter(None, [label, cvss_str, src]))
+                st.markdown(f"{icon} **{cve}** — {sev}" + (f"  *({meta})*" if meta else ""))
+                if desc:
+                    st.caption(f"  {desc[:200]}")
 
-    # MITRE ATT&CK mapping
-    if mitre:
+    # Security issues (misconfigurations, exposed services, etc.)
+    if security_issues:
+        with st.expander(f"🚨 Security Issues ({len(security_issues)} found)", expanded=True):
+            for v in security_issues:
+                if not isinstance(v, dict):
+                    continue
+                sev   = v.get("severity", "Low")
+                icon  = _severity_icon(sev.title())
+                itype = v.get("type", "Unknown")
+                hdr   = v.get("header", "")
+                desc  = v.get("description", "")
+                src   = v.get("source", "")
+                st.markdown(f"{icon} **{itype}**" + (f" — `{hdr}`" if hdr else "") + (f"  *(source: {src})*" if src else ""))
+                if desc:
+                    st.caption(f"  {desc}")
+
+    # Attack chains — built from actual vulnerability data showing the reasoning
+    if chains:
+        with st.expander(f"⛓️ Attack Chains ({len(chains)} identified)", expanded=True):
+            for chain in chains:
+                if isinstance(chain, dict):
+                    name  = chain.get("name", "Unknown")
+                    sev   = chain.get("severity", "")
+                    steps = chain.get("steps", [])
+                    icon  = _severity_icon(sev)
+                    st.markdown(f"#### {icon} {name}")
+                    for i, step in enumerate(steps, 1):
+                        st.markdown(f"  **{i}.** {step}")
+                    st.markdown("---")
+                elif isinstance(chain, str):
+                    st.markdown(chain)
+
+    # Threat actors (APT groups)
+    if actors:
+        with st.expander(f"👾 Threat Actors ({len(actors)} identified)", expanded=False):
+            for actor in actors:
+                if isinstance(actor, dict):
+                    name  = actor.get("name", "Unknown")
+                    desc  = actor.get("description", "")
+                    aliases = actor.get("aliases", [])
+                    alias_str = f"  *(aliases: {', '.join(aliases[:3])})*" if aliases else ""
+                    st.markdown(f"• **{name}**{alias_str}")
+                    if desc:
+                        # Strip markdown links for cleaner display
+                        import re as _re
+                        clean_desc = _re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', str(desc))
+                        st.caption(f"  {clean_desc[:300]}")
+                else:
+                    st.markdown(f"• {actor}")
+
+    # MITRE ATT&CK mapping (if available)
+    if mitre and isinstance(mitre, dict):
         with st.expander(f"🎯 MITRE ATT&CK Mapping ({len(mitre)} techniques)", expanded=False):
             for tid, info in mitre.items():
                 if isinstance(info, dict):
@@ -508,32 +740,15 @@ def display_correlation_simple(data: Dict[str, Any]):
                 else:
                     st.markdown(f"• **{tid}:** {info}")
 
-    # Threat actors
-    if actors:
-        with st.expander(f"👾 Threat Actors ({len(actors)} identified)", expanded=False):
-            for actor in actors:
-                if isinstance(actor, dict):
-                    name = actor.get("name", "Unknown")
-                    mot  = actor.get("motivation", "")
-                    like = actor.get("likelihood", "")
-                    st.markdown(f"• **{name}**" + (f" — {mot}" if mot else "") + (f"  (likelihood: {like})" if like else ""))
-                else:
-                    st.markdown(f"• {actor}")
+    # APT mapping markdown (if present from scanner)
+    if apt_md and isinstance(apt_md, str) and apt_md.strip():
+        with st.expander("🗺️ APT Threat Mapping", expanded=False):
+            st.markdown(apt_md)
 
-    # Attack chains
-    if chains:
-        with st.expander(f"⛓️ Attack Chains ({len(chains)} identified)", expanded=False):
-            for chain in chains:
-                if isinstance(chain, dict):
-                    name  = chain.get("name", "Unknown")
-                    sev   = chain.get("severity", "")
-                    steps = chain.get("steps", [])
-                    icon  = _severity_icon(sev)
-                    st.markdown(f"{icon} **{name}**")
-                    for i, step in enumerate(steps, 1):
-                        st.markdown(f"  {i}. {step}")
-                else:
-                    st.markdown(f"• {chain}")
+    # Attack vectors markdown (if present from scanner)
+    if attack_vectors_md and isinstance(attack_vectors_md, str) and attack_vectors_md.strip():
+        with st.expander("🎯 Attack Vector Analysis", expanded=False):
+            st.markdown(attack_vectors_md)
 
 
 # ── Phase 5: Risk Assessment ──────────────────────────────────────────────────
@@ -547,68 +762,275 @@ def display_risk_simple(data: Dict[str, Any]):
         st.error(f"Phase 5 failed: {data['error']}")
         return
 
-    overview    = data.get("risk_overview", {})
-    assets      = data.get("asset_risks", [])
-    threat_land = data.get("threat_landscape", {})
-    compliance  = data.get("compliance_status", {})
-    impact      = data.get("business_impact", {})
-    recs        = data.get("recommendations", [])
+    # ── Normalize: handle both RiskAssessmentEngine schema (new) and RiskAssessment schema (old) ──
+    # New engine produces: risk_matrix, multidimensional_score, business_risk, infrastructure_risk,
+    #                      application_risk, business_impact, action_plan, threat_actor_profile, executive_summary
+    # Old class produces:  risk_overview, asset_risks, threat_landscape, compliance_status,
+    #                      business_impact, recommendations
 
-    # Top-level risk metrics
-    level = overview.get("overall_risk_level", "Unknown")
-    score = overview.get("risk_score", 0)
-    icon  = _risk_icon(level)
+    # Determine which schema we have
+    has_new_schema = "risk_matrix" in data or "multidimensional_score" in data
+    has_old_schema = "risk_overview" in data
 
+    # ── Extract risk level and score ──
+    if has_new_schema:
+        risk_matrix  = data.get("risk_matrix", {})
+        multi_score  = data.get("multidimensional_score", {})
+        level        = risk_matrix.get("risk_level", "Unknown")
+        raw_score    = multi_score.get("overall_risk_score", 0)
+        # Convert 0-10 scale to 0-100 for display
+        score        = round(float(raw_score) * 10, 1) if raw_score else 0
+        exposure     = risk_matrix.get("risk_level", "Unknown")
+    elif has_old_schema:
+        overview = data.get("risk_overview", {})
+        level    = overview.get("overall_risk_level", "Unknown")
+        score    = overview.get("risk_score", 0)
+        exposure = overview.get("exposure_level", "Unknown")
+    else:
+        level = "Unknown"
+        score = 0
+        exposure = "Unknown"
+
+    icon = _risk_icon(level)
+
+    # ── Build key findings from available data ──
+    findings = []
+    if has_new_schema:
+        biz_risk   = data.get("business_risk", {})
+        infra_risk = data.get("infrastructure_risk", {})
+        app_risk   = data.get("application_risk", {})
+        if biz_risk.get("analysis"):
+            findings.append(f"Business Risk ({biz_risk.get('risk_level','?')}): {str(biz_risk['analysis'])[:200]}")
+        if infra_risk.get("analysis"):
+            findings.append(f"Infrastructure Risk ({infra_risk.get('risk_level','?')}): {str(infra_risk['analysis'])[:200]}")
+        if app_risk.get("analysis"):
+            findings.append(f"Application Risk ({app_risk.get('risk_level','?')}): {str(app_risk['analysis'])[:200]}")
+    elif has_old_schema:
+        findings = data.get("risk_overview", {}).get("key_findings", [])
+
+    # ── Top metrics ──
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Risk Level",   f"{icon} {level}")
-    c2.metric("Risk Score",   f"{score}/100")
-    c3.metric("Exposure",     overview.get("exposure_level", "Unknown"))
-    c4.metric("Findings",     len(overview.get("key_findings", [])))
-    st.progress(min(score, 100) / 100)
+    c1.metric("Risk Level",  f"{icon} {level}")
+    c2.metric("Risk Score",  f"{round(score)}/100")
+    c3.metric("Exposure",    exposure)
+    c4.metric("Findings",    len(findings))
+    st.progress(min(float(score), 100) / 100)
     st.divider()
 
-    # Key findings
-    findings = overview.get("key_findings", [])
+    # ── Executive Summary (new schema) ──
+    exec_summary = data.get("executive_summary", "")
+    if exec_summary and isinstance(exec_summary, str) and exec_summary.strip():
+        with st.expander("📋 Executive Summary", expanded=True):
+            st.text(exec_summary)
+
+    # ── Key Findings ──
     if findings:
         with st.expander("🔍 Key Findings", expanded=True):
             for f in findings:
                 st.markdown(f"• {f}")
 
-    # Recommendations (most important — expanded by default)
-    if recs:
+    # ── Risk Dimensions (new schema) ──
+    if has_new_schema:
+        risk_matrix = data.get("risk_matrix", {})
+        dims = risk_matrix.get("dimensions", {})
+        if dims:
+            with st.expander("📊 Risk Matrix Dimensions", expanded=True):
+                for dim_name, dim_data in dims.items():
+                    if isinstance(dim_data, dict):
+                        dl    = dim_data.get("level", "Unknown")
+                        ds    = dim_data.get("score", 0)
+                        dw    = dim_data.get("weight", "")
+                        dicon = _risk_icon(dl)
+                        st.markdown(f"{dicon} **{dim_name.replace('_',' ').title()}** — {dl}  (score: {ds}/4, weight: {dw})")
+                interp = risk_matrix.get("interpretation", "")
+                if interp:
+                    st.info(interp)
+
+        # Multi-dimensional score breakdown
+        multi = data.get("multidimensional_score", {})
+        if multi:
+            with st.expander("🎯 Multi-Dimensional Risk Score", expanded=False):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Overall Score", f"{multi.get('overall_risk_score', 0)}/10")
+                    st.metric("Risk Rating",   multi.get("risk_rating", "Unknown"))
+                with c2:
+                    breakdown = multi.get("score_breakdown", "")
+                    if breakdown:
+                        st.code(breakdown, language="text")
+                interp = multi.get("interpretation", "")
+                if interp:
+                    st.info(interp)
+
+    # ── Business Risk Detail (new schema) ──
+    biz_risk = data.get("business_risk", {})
+    if biz_risk and isinstance(biz_risk, dict) and biz_risk.get("analysis"):
+        with st.expander(f"💼 Business Risk — {biz_risk.get('risk_level','?')}", expanded=False):
+            cats = biz_risk.get("categories", [])
+            if cats:
+                st.markdown("**Risk Categories:**")
+                for c in cats:
+                    st.markdown(f"  • {c}")
+            analysis = biz_risk.get("analysis", "")
+            if analysis:
+                st.write(analysis)
+
+    # ── Infrastructure Risk Detail (new schema) ──
+    infra_risk = data.get("infrastructure_risk", {})
+    if infra_risk and isinstance(infra_risk, dict) and infra_risk.get("analysis"):
+        with st.expander(f"🌐 Infrastructure Risk — {infra_risk.get('risk_level','?')}", expanded=False):
+            areas = infra_risk.get("risk_areas", [])
+            if areas:
+                st.markdown("**Risk Areas:**")
+                for a in areas:
+                    st.markdown(f"  • {a}")
+            analysis = infra_risk.get("analysis", "")
+            if analysis:
+                st.write(analysis)
+
+    # ── Application Risk Detail (new schema) ──
+    app_risk = data.get("application_risk", {})
+    if app_risk and isinstance(app_risk, dict) and app_risk.get("analysis"):
+        with st.expander(f"🖥️ Application Risk — {app_risk.get('risk_level','?')}", expanded=False):
+            cats = app_risk.get("risk_categories", [])
+            if cats:
+                st.markdown("**Risk Categories:**")
+                for c in cats:
+                    st.markdown(f"  • {c}")
+            analysis = app_risk.get("analysis", "")
+            if analysis:
+                st.write(analysis)
+
+    # ── Business Impact ──
+    impact = data.get("business_impact", {})
+    if impact and isinstance(impact, dict):
+        with st.expander("💼 Business Impact", expanded=True):
+            if has_new_schema:
+                c1, c2 = st.columns(2)
+                with c1:
+                    _kv("Overall Impact",   impact.get("overall_impact"))
+                    _kv("Financial Range",  impact.get("financial_range"))
+                    _kv("Recovery Time",    impact.get("recovery_time"))
+                with c2:
+                    dims = impact.get("impact_dimensions", {})
+                    if dims:
+                        for k, v in dims.items():
+                            icon_d = _risk_icon(str(v))
+                            st.markdown(f"  {icon_d} **{k.replace('_',' ').title()}:** {v}")
+                analysis = impact.get("analysis", "")
+                if analysis:
+                    st.info(analysis)
+            else:
+                c1, c2 = st.columns(2)
+                with c1:
+                    _kv("Potential Impact",   impact.get("potential_impact"))
+                    _kv("Financial Risk",     impact.get("financial_risk"))
+                    _kv("Operational Impact", impact.get("operational_impact"))
+                with c2:
+                    _kv("Reputational Risk",  impact.get("reputational_risk"))
+                    _kv("Industry",           impact.get("industry"))
+                    _kv("Company Size",       impact.get("company_size"))
+                desc = impact.get("description")
+                if desc:
+                    st.info(desc)
+
+    # ── 30/60/90 Day Action Plan (new schema) ──
+    action_plan = data.get("action_plan", {})
+    if action_plan and isinstance(action_plan, dict) and not action_plan.get("error"):
+        with st.expander("🗓️ 30/60/90 Day Remediation Plan", expanded=True):
+            for day_key in ("day_30", "day_60", "day_90"):
+                day_data = action_plan.get(day_key, {})
+                if not day_data or not isinstance(day_data, dict):
+                    continue
+                theme = day_data.get("theme", day_key.replace("_", " ").title())
+                label = day_key.replace("_", " ").replace("day", "Day").title()
+                st.markdown(f"**{label}: {theme}**")
+                tasks = day_data.get("tasks", [])
+                for task in tasks:
+                    if isinstance(task, dict):
+                        action  = task.get("action", "")
+                        owner   = task.get("owner", "")
+                        outcome = task.get("outcome", "")
+                        st.markdown(f"  • {action}" + (f"  *(Owner: {owner})*" if owner else ""))
+                        if outcome:
+                            st.caption(f"    → {outcome}")
+                    else:
+                        st.markdown(f"  • {task}")
+                st.markdown("")
+
+    # ── Threat Actor Profile (new schema) ──
+    tap = data.get("threat_actor_profile", {})
+    if tap and isinstance(tap, dict) and not tap.get("error"):
+        primary = tap.get("primary_threat_actors", [])
+        if primary:
+            with st.expander(f"👾 Threat Actor Profile ({len(primary)} actors)", expanded=False):
+                overall_tl = tap.get("overall_threat_level", "")
+                if overall_tl:
+                    st.markdown(f"**Overall Threat Level:** {_risk_icon(overall_tl)} {overall_tl}")
+                analyst_note = tap.get("analyst_note", "")
+                if analyst_note:
+                    st.info(analyst_note)
+                for actor in primary:
+                    if isinstance(actor, dict):
+                        name    = actor.get("name", "Unknown")
+                        origin  = actor.get("origin", "")
+                        mot     = actor.get("motivation", "")
+                        like    = actor.get("likelihood", "")
+                        why     = actor.get("why_this_company", "")
+                        ttps    = actor.get("known_ttps", [])
+                        matches = actor.get("matching_findings", "")
+                        like_icon = _risk_icon(like)
+                        st.markdown(f"**{name}**" + (f"  ({origin})" if origin else "") + (f"  — Likelihood: {like_icon} {like}" if like else ""))
+                        if mot:     st.caption(f"  Motivation: {mot}")
+                        if why:     st.caption(f"  Why this target: {why}")
+                        if matches: st.caption(f"  Matching findings: {matches}")
+                        if ttps:    st.caption(f"  Known TTPs: {', '.join(ttps[:5])}")
+                        st.markdown("---")
+                opp = tap.get("opportunistic_threats", "")
+                if opp:
+                    st.markdown("**Opportunistic Threats:**")
+                    st.write(opp)
+
+    # ── Recommendations (old schema) ──
+    recs = data.get("recommendations", [])
+    if recs and isinstance(recs, list):
         with st.expander(f"💡 Recommendations ({len(recs)})", expanded=True):
             for rec in recs:
-                prio  = rec.get("priority", "Low")
-                icon  = _severity_icon(prio)
-                title = rec.get("title", "")
-                tl    = rec.get("timeline", "")
-                desc  = rec.get("description", "")
+                if not isinstance(rec, dict):
+                    st.markdown(f"• {rec}")
+                    continue
+                prio   = rec.get("priority", "Low")
+                r_icon = _severity_icon(prio)
+                title  = rec.get("title", "")
+                tl     = rec.get("timeline", "")
+                desc   = rec.get("description", "")
                 action = rec.get("action", "")
-                imp   = rec.get("impact", "")
-                st.markdown(f"{icon} **{title}**" + (f"  *(Timeline: {tl})*" if tl else ""))
+                imp    = rec.get("impact", "")
+                st.markdown(f"{r_icon} **{title}**" + (f"  *(Timeline: {tl})*" if tl else ""))
                 if desc:   st.caption(f"  Issue: {desc}")
                 if action: st.caption(f"  Action: {action}")
                 if imp:    st.caption(f"  Impact: {imp}")
                 st.markdown("---")
 
-    # Business impact
-    if impact:
-        with st.expander("💼 Business Impact", expanded=False):
-            c1, c2 = st.columns(2)
-            with c1:
-                _kv("Potential Impact",   impact.get("potential_impact"))
-                _kv("Financial Risk",     impact.get("financial_risk"))
-                _kv("Operational Impact", impact.get("operational_impact"))
-            with c2:
-                _kv("Reputational Risk",  impact.get("reputational_risk"))
-                _kv("Industry",           impact.get("industry"))
-                _kv("Company Size",       impact.get("company_size"))
-            desc = impact.get("description")
-            if desc:
-                st.info(desc)
+    # ── Old schema: Asset risks ──
+    assets = data.get("asset_risks", [])
+    if assets and isinstance(assets, list):
+        with st.expander(f"🏗️ Asset Risks ({len(assets)} assets)", expanded=False):
+            for asset in assets:
+                if not isinstance(asset, dict):
+                    continue
+                rl    = asset.get("risk_level", "Low")
+                a_icon = _risk_icon(rl)
+                name  = asset.get("name", "Unknown")
+                atype = asset.get("type", "")
+                st.markdown(f"{a_icon} **{name}**" + (f"  ({atype})" if atype else ""))
+                vulns = asset.get("vulnerabilities", [])
+                for v in vulns:
+                    st.markdown(f"  ⚠️ {v}")
 
-    # Compliance status
-    if compliance:
+    # ── Old schema: Compliance status ──
+    compliance = data.get("compliance_status", {})
+    if compliance and isinstance(compliance, dict):
         with st.expander("⚖️ Compliance Status", expanded=False):
             for framework, info in compliance.items():
                 if not isinstance(info, dict):
@@ -620,39 +1042,27 @@ def display_risk_simple(data: Dict[str, Any]):
                 for gap in gaps:
                     st.markdown(f"  • {gap}")
 
-    # Asset risks
-    if assets:
-        with st.expander(f"🏗️ Asset Risks ({len(assets)} assets)", expanded=False):
-            for asset in assets:
-                rl   = asset.get("risk_level", "Low")
-                icon = _risk_icon(rl)
-                name = asset.get("name", "Unknown")
-                atype = asset.get("type", "")
-                st.markdown(f"{icon} **{name}**" + (f"  ({atype})" if atype else ""))
-                vulns = asset.get("vulnerabilities", [])
-                if vulns:
-                    for v in vulns:
-                        st.markdown(f"  ⚠️ {v}")
-
-    # Threat landscape
-    ta = threat_land.get("threat_actors", [])
-    av = threat_land.get("attack_vectors", [])
-    mt = threat_land.get("mitre_techniques", [])
-    if ta or av or mt:
-        with st.expander("🌍 Threat Landscape", expanded=False):
-            if ta:
-                st.markdown("**Threat Actors:**")
-                for actor in ta:
-                    if isinstance(actor, dict):
-                        st.markdown(f"  • **{actor.get('name')}** — {actor.get('motivation','')} (likelihood: {actor.get('likelihood','')})")
-                    else:
-                        st.markdown(f"  • {actor}")
-            if mt:
-                st.markdown(f"**MITRE Techniques:** {', '.join(mt)}")
-            if av:
-                st.markdown("**Attack Vectors:**")
-                for v in av:
-                    if isinstance(v, dict):
-                        st.markdown(f"  • **{v.get('name','')}** — {v.get('severity','')}")
-                    else:
-                        st.markdown(f"  • {v}")
+    # ── Old schema: Threat landscape ──
+    threat_land = data.get("threat_landscape", {})
+    if threat_land and isinstance(threat_land, dict):
+        ta = threat_land.get("threat_actors", [])
+        av = threat_land.get("attack_vectors", [])
+        mt = threat_land.get("mitre_techniques", [])
+        if ta or av or mt:
+            with st.expander("🌍 Threat Landscape", expanded=False):
+                if ta:
+                    st.markdown("**Threat Actors:**")
+                    for actor in ta:
+                        if isinstance(actor, dict):
+                            st.markdown(f"  • **{actor.get('name')}** — {actor.get('motivation','')} (likelihood: {actor.get('likelihood','')})")
+                        else:
+                            st.markdown(f"  • {actor}")
+                if mt:
+                    st.markdown(f"**MITRE Techniques:** {', '.join(mt)}")
+                if av:
+                    st.markdown("**Attack Vectors:**")
+                    for v in av:
+                        if isinstance(v, dict):
+                            st.markdown(f"  • **{v.get('name','')}** — {v.get('severity','')}")
+                        else:
+                            st.markdown(f"  • {v}")

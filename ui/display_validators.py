@@ -125,23 +125,48 @@ def _normalize_phase3(data: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_phase4(data: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize Phase 4 (Correlation) data"""
     logger.info("🔍 Normalizing Phase 4 data...")
-    
-    # Ensure all expected keys exist
-    required_keys = ['cves_all', 'security_issues', 'technologies', 'attack_vectors', 'apt_mapping']
-    for key in required_keys:
+
+    # ── Ensure list keys exist (but DON'T overwrite non-empty strings — scanner stores
+    #    attack_vectors and apt_mapping as markdown strings, not lists) ──
+    list_keys = ['cves_all', 'security_issues', 'technologies']
+    for key in list_keys:
         if key not in data:
-            if key in ['cves_all', 'security_issues', 'technologies', 'attack_vectors', 'apt_mapping']:
-                data[key] = []
-    
-    # Ensure lists are lists
-    for key in ['cves_all', 'security_issues', 'technologies', 'attack_vectors', 'apt_mapping']:
-        if not isinstance(data.get(key), list):
             data[key] = []
-    
+        elif not isinstance(data.get(key), list):
+            data[key] = []
+
+    # ── Alias: scanner saves CVEs as 'vulnerabilities', engine uses 'cves_all' ──
+    if not data.get('cves_all') and data.get('vulnerabilities'):
+        data['cves_all'] = data['vulnerabilities']
+
+    # attack_vectors: scanner stores as markdown string (attack_vectors_md) OR list
+    # Preserve the string; only default to [] if completely absent
+    if 'attack_vectors' not in data:
+        data['attack_vectors'] = []
+    # If it's a non-empty string, keep it as-is (display function handles both)
+
+    # apt_mapping: scanner stores as apt_mapping_md (markdown string)
+    # Keep apt_mapping as-is; don't force to []
+    if 'apt_mapping' not in data:
+        data['apt_mapping'] = []
+    # Only reset if it's an empty non-list (e.g. None or 0)
+    elif data['apt_mapping'] is None:
+        data['apt_mapping'] = []
+
     # Ensure issues_by_category exists
     if 'issues_by_category' not in data:
         data['issues_by_category'] = {}
-    
+
+    # ── Normalize CVE severity to Title Case so display comparisons work ──
+    # Scanner produces "CRITICAL", "HIGH", etc. — display uses "Critical", "High"
+    sev_map = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium", "LOW": "Low", "INFO": "Info"}
+    for vuln in data.get('cves_all', []):
+        if isinstance(vuln, dict) and 'severity' in vuln:
+            vuln['severity'] = sev_map.get(str(vuln['severity']).upper(), vuln['severity'])
+    for issue in data.get('security_issues', []):
+        if isinstance(issue, dict) and 'severity' in issue:
+            issue['severity'] = sev_map.get(str(issue['severity']).upper(), issue['severity'])
+
     logger.info("✅ Phase 4 data normalized")
     return data
 

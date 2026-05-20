@@ -1,4 +1,3 @@
-from .discovery import BSIInfrastructureDiscovery
-from .models import InfrastructureData, SubdomainInfo
+from .discovery_full import BSIInfrastructureDiscovery, InfrastructureData, SubdomainInfo
 
 __all__ = ['BSIInfrastructureDiscovery', 'InfrastructureData', 'SubdomainInfo']

@@ -28,6 +28,9 @@ except ImportError:
 # ============================================================================
 GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3-flash-preview"]
 
+# Alias for backward compatibility with archive phase files
+GEMINI_MODEL = GEMINI_MODELS[0]
+
 # ============================================================================
 # API KEYS — loaded from .env (GEMINI_API_KEY_1 … GEMINI_API_KEY_22)
 # ============================================================================
