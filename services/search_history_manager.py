@@ -6,7 +6,7 @@ Search History Manager - Manages domain search history and quick access
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class SearchHistoryManager:
     """Manages search history for quick domain access and retrieval"""
     
-    def __init__(self, db_path: str = "bsi_analysis.db"):
+    def __init__(self, db_path: str = "data/bsi_analysis.db"):
         """Initialize search history manager"""
         self.db = get_db_manager(db_path)
     
@@ -122,3 +122,16 @@ class SearchHistoryManager:
                 logger.info(f"✅ Updated {domain} status to {status}")
         except Exception as e:
             logger.error(f"❌ Failed to update search status: {e}")
+
+    def delete_domain(self, domain: str) -> bool:
+        """Delete all data for a domain (analysis, phases, cache, search history)"""
+        try:
+            result = self.db.delete_domain_data(domain)
+            if result:
+                logger.info(f"🗑️ Deleted all data for {domain}")
+            else:
+                logger.warning(f"⚠️ No data found for {domain}")
+            return result
+        except Exception as e:
+            logger.error(f"❌ Failed to delete domain {domain}: {e}")
+            return False

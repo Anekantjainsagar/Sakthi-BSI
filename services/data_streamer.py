@@ -8,7 +8,7 @@ import json
 import logging
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class DataStreamer:
     """Streams and stores phase data in real-time"""
     
-    def __init__(self, analysis_id: int, domain: str, db_path: str = "bsi_analysis.db"):
+    def __init__(self, analysis_id: int, domain: str, db_path: str = "data/bsi_analysis.db"):
         """Initialize data streamer"""
         self.analysis_id = analysis_id
         self.domain = domain
@@ -119,7 +119,14 @@ class DataStreamer:
             
             elif phase_num == 2:  # Infrastructure
                 metrics['subdomains'] = len(data.get('subdomains', []))
-                metrics['open_ports'] = sum(len(p) for p in data.get('open_ports', {}).values())
+                # Handle open_ports as either dict or list
+                open_ports = data.get('open_ports', {})
+                if isinstance(open_ports, dict):
+                    metrics['open_ports'] = sum(len(p) for p in open_ports.values())
+                elif isinstance(open_ports, list):
+                    metrics['open_ports'] = len(open_ports)
+                else:
+                    metrics['open_ports'] = 0
                 metrics['dns_records'] = len(data.get('dns_records', {}))
             
             elif phase_num == 3:  # Application
@@ -129,13 +136,19 @@ class DataStreamer:
             
             elif phase_num == 4:  # Correlation
                 metrics['cves_found'] = len(data.get('cves_all', []))
-                metrics['security_issues'] = len(data.get('security_issues', []))
-                metrics['attack_vectors'] = len(data.get('attack_vectors', []))
+                metrics['security_issues'] = len(data.get('vulnerabilities', data.get('security_issues', [])))
+                metrics['attack_vectors'] = len(data.get('attack_chains', data.get('attack_vectors', [])))
+                metrics['overall_risk_score'] = data.get('overall_risk_score', 0)
             
             elif phase_num == 5:  # Risk Assessment
                 metrics['business_risk'] = data.get('business_risk', {}).get('risk_level', 'N/A')
                 metrics['infra_risk'] = data.get('infrastructure_risk', {}).get('risk_level', 'N/A')
                 metrics['app_risk'] = data.get('application_risk', {}).get('risk_level', 'N/A')
+                # Also check nested risk_overview
+                risk_overview = data.get('risk_overview', {})
+                if risk_overview:
+                    metrics['overall_risk_level'] = risk_overview.get('overall_risk_level', 'N/A')
+                    metrics['risk_score'] = risk_overview.get('risk_score', 0)
         
         except Exception as e:
             logger.warning(f"⚠️ Error extracting metrics for Phase {phase_num}: {e}")

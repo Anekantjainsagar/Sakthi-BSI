@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, Optional
 import logging
 
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class BSIOrchestratorWithDB:
     """Enhanced orchestrator with database integration"""
     
-    def __init__(self, db_path: str = "bsi_analysis.db"):
+    def __init__(self, db_path: str = "data/bsi_analysis.db"):
         """Initialize orchestrator with database"""
         self.db = get_db_manager(db_path)
         self.domain = None

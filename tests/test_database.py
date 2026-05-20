@@ -5,7 +5,7 @@ Shows how to use the database with the orchestrator
 """
 
 import time
-from core.database import get_db_manager
+from data.database import get_db_manager
 from core.orchestrator import BSIOrchestratorWithDB
 
 

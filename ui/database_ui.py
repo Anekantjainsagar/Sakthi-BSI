@@ -6,7 +6,7 @@ Displays analysis history, resume options, and database statistics
 
 import streamlit as st
 from datetime import datetime
-from core.database import get_db_manager
+from data.database import get_db_manager
 from core.orchestrator import DatabaseIntegrationHelper
 
 

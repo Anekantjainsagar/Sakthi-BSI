@@ -1,5 +1,4 @@
 aiohttp==3.13.5
-aiohttp==3.13.5
 beautifulsoup4==4.14.3
 certifi==2026.4.22
 colorama==0.4.6
@@ -14,4 +13,3 @@ Requests==2.34.2
 streamlit==1.57.0
 urllib3==2.7.0
 whois==1.20240129.2
-

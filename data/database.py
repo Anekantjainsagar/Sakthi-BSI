@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class BSIDatabaseManager:
     """Manages SQLite database for BSI analysis history and caching"""
     
-    def __init__(self, db_path: str = "bsi_analysis.db"):
+    def __init__(self, db_path: str = "data/bsi_analysis.db"):
         """Initialize database connection and create tables if needed"""
         self.db_path = db_path
         self.lock = threading.Lock()  # Thread-safe operations
@@ -604,12 +604,46 @@ class BSIDatabaseManager:
                 logger.info(f"🗑️ Deleted analysis {analysis_id}")
             finally:
                 conn.close()
+    
+    def delete_domain_data(self, domain: str) -> bool:
+        """Delete all data for a domain (analysis, phases, cache, search history)"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            try:
+                # Get analysis ID
+                cursor.execute('SELECT id FROM analysis_history WHERE domain = ?', (domain,))
+                result = cursor.fetchone()
+                
+                if not result:
+                    logger.warning(f"⚠️ No analysis found for domain {domain}")
+                    return False
+                
+                analysis_id = result['id']
+                
+                # Delete all related data
+                cursor.execute('DELETE FROM phase_results WHERE analysis_id = ?', (analysis_id,))
+                cursor.execute('DELETE FROM analysis_summary WHERE analysis_id = ?', (analysis_id,))
+                cursor.execute('DELETE FROM analysis_history WHERE id = ?', (analysis_id,))
+                cursor.execute('DELETE FROM api_cache WHERE domain = ?', (domain,))
+                cursor.execute('DELETE FROM search_history WHERE domain = ?', (domain,))
+                
+                conn.commit()
+                logger.info(f"🗑️ Deleted all data for domain {domain}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to delete domain data: {e}")
+                return False
+            finally:
+                conn.close()
 
 
 # Singleton instance
 _db_instance = None
 
-def get_db_manager(db_path: str = "bsi_analysis.db") -> BSIDatabaseManager:
+def get_db_manager(db_path: str = "data/bsi_analysis.db") -> BSIDatabaseManager:
     """Get or create database manager singleton"""
     global _db_instance
     if _db_instance is None:

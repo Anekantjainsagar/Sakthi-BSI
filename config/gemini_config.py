@@ -3,12 +3,13 @@
 BSI Central Gemini Configuration
 ==================================
 Single source of truth for:
-  - Gemini model name  (change GEMINI_MODEL to update all phases at once)
-  - 22 API keys        (loaded from .env, never hardcoded in any phase file)
-  - Auto key rotation  (on quota / 429, silently moves to next key)
+  - 3 Gemini models   (rotated per call for availability & quality)
+  - 22 API keys       (loaded from .env, never hardcoded in any phase file)
+  - Model-Key pairing (creates 66 effective API configurations)
+  - Auto key rotation (on quota / 429, silently moves to next key)
 
 Usage in any phase file:
-    from config.gemini_config import call_gemini, GEMINI_MODEL, GEMINI_API_KEYS
+    from config.gemini_config import call_gemini, GEMINI_MODELS, GEMINI_API_KEYS
 """
 
 import os
@@ -23,9 +24,9 @@ except ImportError:
     pass  # dotenv optional — keys can be set in OS environment directly
 
 # ============================================================================
-# MODEL NAME — change this ONE line to update the model across all BSI phases
+# MODELS — rotated per call to diversify LLM usage and check availability
 # ============================================================================
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3-flash-preview"]
 
 # ============================================================================
 # API KEYS — loaded from .env (GEMINI_API_KEY_1 … GEMINI_API_KEY_22)
@@ -40,7 +41,8 @@ if not GEMINI_API_KEYS:
         GEMINI_API_KEYS = [_legacy]
 
 # ── Rotation state (module-level, shared across all callers in one process) ──
-_current_idx = 0
+_current_key_idx = 0
+_current_model_idx = 0
 _key_status   = {
     i: {"status": "active", "usage_count": 0, "exhausted_at": None}
     for i in range(len(GEMINI_API_KEYS))
@@ -51,7 +53,18 @@ def get_current_key() -> str | None:
     """Return the currently active API key, or None if all exhausted."""
     if not GEMINI_API_KEYS:
         return None
-    return GEMINI_API_KEYS[_current_idx]
+    return GEMINI_API_KEYS[_current_key_idx]
+
+
+def get_current_model() -> str:
+    """Return the currently active model."""
+    return GEMINI_MODELS[_current_model_idx]
+
+
+def rotate_model() -> None:
+    """Rotate to the next model (cycles through all 3 models)."""
+    global _current_model_idx
+    _current_model_idx = (_current_model_idx + 1) % len(GEMINI_MODELS)
 
 
 def rotate_key() -> bool:
@@ -59,19 +72,19 @@ def rotate_key() -> bool:
     Mark current key as exhausted and move to the next active one.
     Returns True if a new key is available, False if all keys are exhausted.
     """
-    global _current_idx
+    global _current_key_idx
     if not GEMINI_API_KEYS:
         return False
 
-    _key_status[_current_idx]["status"]       = "exhausted"
-    _key_status[_current_idx]["exhausted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"  ⚠️  Gemini Key {_current_idx + 1} quota exceeded — rotating...")
+    _key_status[_current_key_idx]["status"]       = "exhausted"
+    _key_status[_current_key_idx]["exhausted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"  ⚠️  Gemini Key {_current_key_idx + 1} quota exceeded — rotating...")
 
-    next_idx = _current_idx + 1
+    next_idx = _current_key_idx + 1
     while next_idx < len(GEMINI_API_KEYS):
         if _key_status[next_idx]["status"] == "active":
-            _current_idx = next_idx
-            print(f"  ✅ Now using Gemini Key {_current_idx + 1} / {len(GEMINI_API_KEYS)}")
+            _current_key_idx = next_idx
+            print(f"  ✅ Now using Gemini Key {_current_key_idx + 1} / {len(GEMINI_API_KEYS)}")
             return True
         next_idx += 1
 
@@ -81,12 +94,16 @@ def rotate_key() -> bool:
 
 def call_gemini(prompt: str, max_tokens: int = 65536, temperature: float = 0.7) -> str | None:
     """
-    Call Gemini AI with automatic key rotation on quota / 429 errors.
+    Call Gemini AI with automatic model and key rotation.
+    - Rotates through 3 models on each call (for availability & quality)
+    - Rotates through 22 API keys on quota/429 errors
+    - Creates 66 effective API configurations (3 models × 22 keys)
+    
     Returns the response text, or None if all keys failed.
 
     This is the ONLY function all BSI phases should use for Gemini calls.
     """
-    global _current_idx
+    global _current_key_idx, _current_model_idx
 
     try:
         import google.generativeai as genai
@@ -98,16 +115,20 @@ def call_gemini(prompt: str, max_tokens: int = 65536, temperature: float = 0.7) 
         print("  ❌ No Gemini API keys available")
         return None
 
+    # Rotate model on each call (cycles through all 3 models)
+    rotate_model()
+    current_model = get_current_model()
+
     attempts = 0
     max_attempts = len(GEMINI_API_KEYS)
 
     while attempts < max_attempts:
-        key = GEMINI_API_KEYS[_current_idx]
-        _key_status[_current_idx]["usage_count"] += 1
+        key = GEMINI_API_KEYS[_current_key_idx]
+        _key_status[_current_key_idx]["usage_count"] += 1
 
         try:
             genai.configure(api_key=key)
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            model = genai.GenerativeModel(current_model)
 
             generation_config = genai.types.GenerationConfig(
                 temperature=temperature,
@@ -133,6 +154,7 @@ def call_gemini(prompt: str, max_tokens: int = 65536, temperature: float = 0.7) 
                 return None
 
             if response.text:
+                print(f"  ✅ Gemini response (Model: {current_model}, Key: {_current_key_idx + 1}/{len(GEMINI_API_KEYS)})")
                 return response.text
             return None
 
@@ -145,22 +167,24 @@ def call_gemini(prompt: str, max_tokens: int = 65536, temperature: float = 0.7) 
                 attempts += 1
                 continue
             else:
-                print(f"  ⚠️  Gemini error (Key {_current_idx + 1}): {str(e)[:120]}")
+                print(f"  ⚠️  Gemini error (Model: {current_model}, Key {_current_key_idx + 1}): {str(e)[:120]}")
                 return None
 
     return None
 
 
 def key_summary() -> str:
-    """Return a one-line summary of key pool status."""
+    """Return a one-line summary of key pool and model status."""
     active    = sum(1 for s in _key_status.values() if s["status"] == "active")
     exhausted = sum(1 for s in _key_status.values() if s["status"] == "exhausted")
     total     = len(GEMINI_API_KEYS)
-    return f"Gemini keys: {active} active / {exhausted} exhausted / {total} total | Model: {GEMINI_MODEL}"
+    models_str = " | ".join(GEMINI_MODELS)
+    return f"Gemini: {active} active / {exhausted} exhausted / {total} total keys | Models: {models_str} | Effective configs: {total * len(GEMINI_MODELS)}"
 
 
 # Print status on import so every phase shows key pool at startup
 if GEMINI_API_KEYS:
-    print(f"  ✅ gemini_config loaded — {len(GEMINI_API_KEYS)} keys available | Model: {GEMINI_MODEL}")
+    print(f"  ✅ gemini_config loaded — {len(GEMINI_API_KEYS)} keys × {len(GEMINI_MODELS)} models = {len(GEMINI_API_KEYS) * len(GEMINI_MODELS)} effective API configurations")
+    print(f"     Models: {', '.join(GEMINI_MODELS)}")
 else:
     print("  ❌ gemini_config: NO Gemini API keys found in .env!")

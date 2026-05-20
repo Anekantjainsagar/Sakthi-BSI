@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.dummy_data_generator import DummyDataGenerator
 from services.parallel_executor import ParallelExecutor
 from services.api_optimizer import APIOptimizer, DNSOptimizer
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("analysis-executor")
@@ -164,11 +164,11 @@ class AnalysisExecutor:
         
         try:
             # Try to import and run real phases
-            from phases.phase1_business import CompanyIntelligenceAnalyzer
-            from phases.phase2_infrastructure import InfrastructureAnalyzer
-            from phases.phase3_application import ApplicationAnalyzer
-            from phases.phase4_correlation import ThreatCorrelationAnalyzer
-            from phases.phase5_risk import RiskAssessmentAnalyzer
+            from phases.phase1 import CompanyIntelligenceAnalyzer
+            from phases.phase2 import BSIInfrastructureDiscovery
+            from phases.phase3 import CompleteBSIScanner
+            from phases.phase4 import AIPhase4Scanner
+            from phases.phase5 import RiskAssessmentEngine
             
             # Phase 1: Business Domain
             logger.info("Running Phase 1: Business Domain Intelligence...")

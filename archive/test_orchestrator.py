@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.dummy_data_generator import DummyDataGenerator
 from services.parallel_executor import ParallelExecutor
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test-orchestrator")

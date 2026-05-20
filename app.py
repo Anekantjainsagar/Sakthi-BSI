@@ -28,21 +28,21 @@ load_dotenv()
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import from new modular structure
+# Import from modular structure
 try:
     from config.gemini_config import GEMINI_API_KEYS
-    from phases.phase4_correlation import AIPhase4Scanner
-    from phases.phase5_risk import RiskAssessmentEngine
-    from phases.phase1_business import CompanyIntelligenceAnalyzer
-    from phases.phase2_infrastructure import BSIInfrastructureDiscovery
-    from phases.phase3_application import CompleteBSIScanner
+    from phases.phase4 import AIPhase4Scanner
+    from phases.phase5 import RiskAssessmentEngine
+    from phases.phase1 import CompanyIntelligenceAnalyzer
+    from phases.phase2 import BSIInfrastructureDiscovery
+    from phases.phase3 import CompleteBSIScanner
     from utils.parsers import parse_spiderfoot_csv, get_section_counts
-    from core.database import get_db_manager
+    from data.database import get_db_manager
     from ui.search_history import SearchHistoryUI
     from services.data_streamer import DataStreamer, StreamingProgressTracker
-    from display_validators import validate_and_normalize_phase_data
-    from simple_display import (display_business_domain_simple, display_infrastructure_simple,
-                                display_application_simple, display_correlation_simple, display_risk_simple)
+    from ui.display_validators import validate_and_normalize_phase_data
+    from ui.simple_display import (display_business_domain_simple, display_infrastructure_simple,
+                                   display_application_simple, display_correlation_simple, display_risk_simple)
 except ImportError as e:
     st.error(f"Required modules not found: {e}")
     st.stop()
@@ -4667,6 +4667,43 @@ def main():
         st.markdown("### 📋 Search History")
         
         search_ui = SearchHistoryUI()
+
+        # ── helper: one domain row with load + delete ──────────────────────
+        def _render_history_row(record, prefix):
+            domain_val = record['domain']
+            status     = record.get('status', 'pending')
+            pct        = record.get('completion_percentage', 0)
+            s_icon     = {"completed": "✅", "in_progress": "⏳", "failed": "❌"}.get(status, "⭕")
+
+            col_load, col_del = st.columns([5, 1])
+            with col_load:
+                label = f"{s_icon} {domain_val} ({pct}%)"
+                if st.button(label, key=f"{prefix}_load_{domain_val}", use_container_width=True):
+                    st.session_state['selected_domain'] = domain_val
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️", key=f"{prefix}_del_{domain_val}", help=f"Delete {domain_val}"):
+                    st.session_state[f"_confirm_del_{domain_val}"] = True
+
+            # Inline confirmation
+            if st.session_state.get(f"_confirm_del_{domain_val}"):
+                st.warning(f"Delete **{domain_val}**?")
+                yes_col, no_col = st.columns(2)
+                with yes_col:
+                    if st.button("Yes", key=f"{prefix}_yes_{domain_val}", use_container_width=True, type="primary"):
+                        from services.search_history_manager import SearchHistoryManager
+                        SearchHistoryManager().delete_domain(domain_val)
+                        st.session_state.pop(f"_confirm_del_{domain_val}", None)
+                        # Clear cached results if this domain is currently loaded
+                        if st.session_state.get('analyzed_domain') == domain_val:
+                            st.session_state.pop('bsi_results', None)
+                            st.session_state.pop('analyzed_domain', None)
+                        st.rerun()
+                with no_col:
+                    if st.button("No", key=f"{prefix}_no_{domain_val}", use_container_width=True):
+                        st.session_state.pop(f"_confirm_del_{domain_val}", None)
+                        st.rerun()
+        # ── end helper ─────────────────────────────────────────────────────
         
         # Search bar
         search_query = st.text_input(
@@ -4680,24 +4717,16 @@ def main():
             if search_results:
                 st.success(f"Found {len(search_results)} domain(s)")
                 for result in search_results[:5]:
-                    if st.button(f"🔗 {result['domain']}", key=f"search_{result['domain']}", use_container_width=True):
-                        st.session_state['selected_domain'] = result['domain']
-                        st.rerun()
+                    _render_history_row(result, "srch")
             else:
                 st.warning("No domains found")
         else:
             # Show recent searches
             st.markdown("**Recent Searches:**")
-            recent = search_ui.get_recent_searches(limit=5)
+            recent = search_ui.get_recent_searches(limit=10)
             if recent:
                 for record in recent:
-                    domain = record['domain']
-                    status = record['status']
-                    status_icon = "✅" if status == 'completed' else "⏳" if status == 'in_progress' else "⭕"
-                    
-                    if st.button(f"{status_icon} {domain}", key=f"recent_{domain}", use_container_width=True):
-                        st.session_state['selected_domain'] = domain
-                        st.rerun()
+                    _render_history_row(record, "rec")
             else:
                 st.info("No search history yet")
     

@@ -11,7 +11,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.database import get_db_manager
+from data.database import get_db_manager
 
 st.set_page_config(
     page_title="Search History - BSI",
