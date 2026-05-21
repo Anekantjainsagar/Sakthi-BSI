@@ -46,3 +46,6 @@ desktop.ini
 # Temp files
 *.tmp
 *.bak
+
+# Kiro IDE
+.kiro/
