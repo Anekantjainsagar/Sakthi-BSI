@@ -166,7 +166,7 @@ class RiskAssessmentEngine:
 
         print(f"   Industry: {industry} | Size: {company_size} | CVEs: {len(cves_all)} ({len(critical_cves)} critical)")
 
-        prompt = f"""You are a senior business risk analyst writing a board-level security risk assessment for a real client.
+        prompt = f"""Write a business risk assessment for the following organisation. Output only the assessment content — no preamble, no self-introduction, no phrases like "As a risk analyst..." or "Based on my analysis...".
 
 TARGET COMPANY PROFILE:
 - Industry: {industry}
@@ -184,7 +184,7 @@ Critical/High CVEs ({len(critical_cves)} critical, {len(high_cves)} high):
 Security Misconfigurations ({len(security_issues)} issues):
 {issue_text}
 
-Write a professional, specific risk assessment for THIS company. Do NOT use generic language like "the organization faces risks".
+Write a professional, specific risk assessment for THIS organisation. Do NOT use generic language like "the organisation faces risks".
 Reference the actual industry, actual CVEs found, and actual compliance obligations.
 Consider: What data does this company hold? What happens if it is breached? What regulations apply and what are the fines?
 
@@ -192,14 +192,14 @@ Provide:
 1. Business Risk Level (Critical / High / Medium / Low)
 2. Business Impact Score (1.0–10.0) — based on industry sensitivity and CVE severity
 3. Top 4 risk categories SPECIFIC to this company's industry and data (name them precisely)
-4. Detailed analysis (4–6 sentences) — write as if briefing the CEO: what is at risk, why it matters to this specific business, what the regulatory exposure is, and what the financial consequences could be
+4. Detailed analysis (4–6 sentences) — what is at risk, why it matters to this specific business, what the regulatory exposure is, and what the financial consequences could be
 
 Return ONLY this JSON (no markdown fences):
 {{
   "risk_level": "High",
   "score": 7.5,
   "categories": ["Chemical Formula IP Theft", "Supply Chain Partner Data Breach", "GDPR Non-Compliance Penalty", "Operational Disruption via Ransomware"],
-  "analysis": "Your detailed CEO-level briefing here..."
+  "analysis": "Your detailed analysis here..."
 }}"""
 
         raw = self.analyze_with_ai(prompt, max_tokens=4096)
@@ -268,7 +268,7 @@ Return ONLY this JSON (no markdown fences):
 
         print(f"   Subdomains: {subdomains} | Open Ports: {open_ports} | Dangerous Ports: {len(dangerous_found)} | Blacklisted IPs: {len(blacklisted)}")
 
-        prompt = f"""You are a senior infrastructure security analyst writing a technical risk narrative for a penetration test report.
+        prompt = f"""Write a technical infrastructure risk narrative for a security assessment report. Output only the narrative — no preamble, no self-introduction.
 
 LIVE INFRASTRUCTURE SCAN RESULTS:
 - Subdomains Discovered: {subdomains} (each subdomain = additional attack surface)
@@ -282,7 +282,7 @@ LIVE INFRASTRUCTURE SCAN RESULTS:
 - Correlated Threat Intelligence Issues:
 {infra_issue_text}
 
-Write a sharp, technical risk narrative. Reference SPECIFIC ports, IPs, and services found.
+Reference SPECIFIC ports, IPs, and services found.
 Explain exactly HOW each exposure can be exploited — not just that it "poses a risk".
 If blacklisted IPs exist, explain what that means (prior compromise, C2 beacon, spam origin).
 If dangerous ports are open, name the attack type (brute force, remote code execution, data exfiltration).
@@ -360,7 +360,7 @@ Return ONLY JSON:
 
         print(f"   Technologies: {len(technologies)} | Critical CVEs: {len(critical_vulns)} | High CVEs: {len(high_vulns)}")
 
-        prompt = f"""You are an application security analyst.
+        prompt = f"""Write an application security risk narrative for a security assessment report. Output only the narrative — no preamble, no self-introduction.
 
 DETECTED APPLICATION TECHNOLOGY STACK:
 {tech_text}
@@ -372,16 +372,15 @@ Critical ({len(critical_vulns)}) + High ({len(high_vulns)}):
 APPLICATION SECURITY POSTURE GAPS:
 {posture_text}
 
-You are writing an application security risk narrative for a penetration test report.
 Reference the SPECIFIC technologies found (CMS name, framework versions, libraries).
-For each CVE, explain what an attacker can actually DO with it (RCE, data exfil, account takeover, etc.).
+For each CVE, explain what an attacker can actually do with it (RCE, data exfil, account takeover, etc.).
 Explain how missing headers/insecure cookies create a real exploit path, not just a compliance gap.
 
 Provide:
 1. Application Risk Level (Critical / High / Medium / Low)
 2. Vulnerability Density Score (1.0–10.0) — higher if critical CVEs exist for detected tech versions
 3. Top 4 application risks — each tied to a SPECIFIC technology or CVE found (not generic)
-4. Technical analysis (4–5 sentences) — describe the realistic exploit scenario an attacker would execute against this application stack
+4. Technical analysis (4–5 sentences) — describe the realistic exploit scenario against this application stack
 
 Return ONLY JSON:
 {{
@@ -444,8 +443,7 @@ Return ONLY JSON:
         else:
             size_context = f"Company size: {company_size} — calibrate financial exposure accordingly"
 
-        prompt = f"""You are a CISO writing the business impact section of a board-level security incident report.
-You are correlating confirmed technical vulnerabilities with real-world financial and operational consequences.
+        prompt = f"""Write the business impact section of a security assessment report. Output only the content — no preamble, no self-introduction, no phrases like "As a CISO..." or "Based on my analysis...".
 
 TECHNICAL RISK SUMMARY:
 Business Risk ({business_risk.get('risk_level','?')}): {biz_analysis}
@@ -475,7 +473,7 @@ Provide:
 2. Realistic financial impact range with reasoning (include regulatory fine estimates if applicable)
 3. Realistic recovery time with explanation
 4. Impact rating across 5 dimensions
-5. Analysis (4–5 sentences) — connect the specific CVEs and misconfigs to real business consequences for this company
+5. Analysis (4–5 sentences) — connect the specific CVEs and misconfigs to real business consequences for this organisation
 
 Return ONLY JSON:
 {{
@@ -489,7 +487,7 @@ Return ONLY JSON:
     "customer_trust": "High",
     "regulatory": "High"
   }},
-  "analysis": "Your board-level impact narrative here..."
+  "analysis": "Your impact narrative here..."
 }}"""
 
         raw = self.analyze_with_ai(prompt, max_tokens=4096)
@@ -558,7 +556,7 @@ Return ONLY JSON:
         labels = {1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical'}
 
         # AI interprets what the scores mean together
-        interp_prompt = f"""You are a security analyst interpreting a composite risk matrix for a client report.
+        interp_prompt = f"""Interpret the following composite risk matrix scores for a security assessment report. Output only the interpretation — no preamble, no self-introduction.
 
 RISK MATRIX SCORES (1=Low, 2=Medium, 3=High, 4=Critical):
 - Business Risk:      {business_score}/4  ({labels.get(business_score,'Unknown')})  — weight 30%
@@ -568,9 +566,9 @@ RISK MATRIX SCORES (1=Low, 2=Medium, 3=High, 4=Critical):
 - Composite Score:    {round(composite_score,2)}/4.0  →  Overall: {composite_level}
 
 Write 3–4 sentences interpreting what these scores mean TOGETHER — not individually.
-Explain what the pattern of scores reveals about the organization's security posture.
-For example: if business and infra are both High but application is Medium, what does that pattern mean?
-Be direct and specific. Do not list the scores again — interpret them."""
+Explain what the pattern of scores reveals about the organisation's security posture.
+Be direct and specific. Do not list the scores again — interpret them. Do not introduce yourself.
+"""
 
         try:
             matrix_interpretation = self.analyze_with_ai(interp_prompt, max_tokens=1024)
@@ -632,7 +630,7 @@ Be direct and specific. Do not list the scores again — interpret them."""
         risk_rating = self._score_to_rating(total_score)
 
         # AI interprets what the 5-dimension pattern means
-        interp_prompt = f"""You are a senior security analyst interpreting a multi-dimensional risk score for a client report.
+        interp_prompt = f"""Interpret the following multi-dimensional risk scores for a security assessment report. Output only the interpretation — no preamble, no self-introduction.
 
 FIVE-DIMENSION RISK SCORES (0–10 scale):
 - Technical Severity:   {dimensions['technical_severity']}/10  (average CVSS of all CVEs — how severe are the vulnerabilities?)
@@ -643,10 +641,10 @@ FIVE-DIMENSION RISK SCORES (0–10 scale):
 
 OVERALL SCORE: {round(total_score,2)}/10.0  →  {risk_rating}
 
-Write 3–4 sentences interpreting what this PATTERN of scores means for the organization.
-Focus on the RELATIONSHIP between dimensions — which combination of scores creates the most dangerous situation?
-For example: high threat intelligence + high exploit likelihood = attackers are already watching AND vulnerabilities are easy to exploit.
-Be direct, specific, and write as if explaining to a CISO. Do not list the scores again — interpret the pattern."""
+Write 3–4 sentences interpreting what this PATTERN of scores means for the organisation.
+Focus on the RELATIONSHIP between dimensions — which combination creates the most dangerous situation?
+Be direct, specific. Do not list the scores again — interpret the pattern. Do not introduce yourself.
+"""
 
         try:
             multi_interpretation = self.analyze_with_ai(interp_prompt, max_tokens=2048)
@@ -848,7 +846,7 @@ Be direct, specific, and write as if explaining to a CISO. Do not list the score
             critical_count = len([c for c in cves if isinstance(c, dict) and c.get('cvss', 0) >= 9.0])
             high_count     = len([c for c in cves if isinstance(c, dict) and 7.0 <= c.get('cvss', 0) < 9.0])
 
-            prompt = f"""You are a Chief Information Security Officer (CISO) writing the Executive Summary section of a formal security assessment report for the board of directors.
+            prompt = f"""Write the executive summary section of a security assessment report for {domain}. Output only the summary content — no preamble, no self-introduction, no phrases like "As a CISO..." or "I have conducted...".
 
 TARGET: {domain} | Industry: {industry} | Size: {company_size}
 OVERALL RISK RATING: {rating} | Composite Score: {composite}/4.0 | Multi-dimensional Score: {overall_score}/10.0
@@ -871,12 +869,12 @@ Infrastructure: {infra_analysis}
 Application: {app_analysis}
 Impact: {impact_analysis}
 
-Write a 3-paragraph professional executive summary for the board:
-- Paragraph 1: Overall security posture — what the assessment found, the overall risk rating, and why it matters to this specific company
+Write 3 paragraphs:
+- Paragraph 1: Overall security posture — what the assessment found, the overall risk rating, and why it matters to this specific organisation
 - Paragraph 2: The 3 most critical findings and their real-world consequences (financial, operational, reputational)
 - Paragraph 3: Urgency statement — what happens if nothing is done, and a high-level call to action
 
-Write in the voice of a CISO briefing the CEO and board. Be direct, specific, and professional. No bullet points — pure narrative paragraphs. Reference the domain, industry, and actual risk levels found."""
+Write in third person. Be direct, specific, and professional. No bullet points — pure narrative paragraphs. Reference the domain, industry, and actual risk levels found. Do not introduce yourself or describe your role."""
 
             ai_text = self.analyze_with_ai(prompt, max_tokens=2048)
 
@@ -939,7 +937,7 @@ TOP PRIORITY ACTIONS (from Phase 4 Correlation):
             for c in critical_cves[:5]
         ]) or "  None"
 
-        prompt = f"""You are a CISO creating a remediation roadmap for {domain} ({industry}).
+        prompt = f"""Write a 30/60/90 day remediation action plan for {domain} ({industry}). Output only the plan — no preamble, no self-introduction.
 Overall Risk: {overall} | Financial Exposure: {fin_range}
 
 PHASE 4 REMEDIATION PRIORITIES:
@@ -1048,7 +1046,7 @@ Return ONLY JSON (no markdown):
                 if high_rep:
                     ip_rep_text = "; ".join([f"{ip} (abuse score {sc}%)" for ip, sc in high_rep[:4]])
 
-        prompt = f"""You are a cyber threat intelligence analyst profiling threat actors that would target {domain}.
+        prompt = f"""Write a threat actor profile for {domain}. Output only the profile content — no preamble, no self-introduction, no phrases like "As a threat intelligence analyst...".
 
 TARGET PROFILE:
 - Domain: {domain}

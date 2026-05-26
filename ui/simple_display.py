@@ -9,6 +9,64 @@ import streamlit as st
 from typing import Dict, Any, List
 
 
+import re as _re
+
+
+# ── AI output post-processing ─────────────────────────────────────────────────
+
+# Patterns that indicate the AI introduced itself instead of just writing the report
+_PREAMBLE_PATTERNS = [
+    # "As a senior..." patterns
+    r'^As a (?:senior |chief |lead )?(?:security|business|infrastructure|application|offensive|intelligence|threat|risk|CISO|analyst|engineer)\s+\w+.*?,\s*',
+    # "Based on my..." patterns
+    r'^(?:Based on|Drawing from|With|Given) (?:my|our) (?:\d+ years? of )?(?:experience|analysis|expertise|background|knowledge).*?,\s*',
+    # "I've conducted..." patterns - FIXED: only match the preamble part, not the whole sentence
+    r'^I(?:\'ve| have) (?:conducted|performed|completed|analysed|analyzed|reviewed|assessed|examined) (?:a |an )?(?:analysis|assessment|review|evaluation|audit|evaluation|threat assessment|security assessment).*?,\s*',
+    # "After/Having..." patterns
+    r'^(?:After|Having) (?:conducting|performing|reviewing|analysing|analyzing|examining).*?,\s*',
+    # "This report..." patterns
+    r'^This (?:report|assessment|analysis|evaluation) (?:has been )?(?:prepared|written|conducted|created) by.*?\.\s*',
+    # "In my analysis..." patterns
+    r'^In (?:my|our) (?:analysis|assessment|evaluation|review).*?,\s*',
+    # "As an expert..." patterns
+    r'^As an? (?:expert|experienced|seasoned).*?,\s*',
+    # "I am..." patterns
+    r'^I am (?:a |an )?(?:security|business|infrastructure|application|offensive|intelligence|threat|risk|CISO|analyst|engineer).*?\.\s*',
+    # "With X years..." patterns
+    r'^With \d+ years? of (?:experience|expertise).*?,\s*',
+    # "Throughout my..." patterns
+    r'^Throughout (?:my|our) (?:career|experience|analysis).*?,\s*',
+]
+_PREAMBLE_RE = _re.compile('|'.join(_PREAMBLE_PATTERNS), _re.IGNORECASE | _re.MULTILINE)
+
+
+def _strip_ai_preamble(text: str) -> str:
+    """Remove AI self-introduction sentences from the start of generated text."""
+    if not text:
+        return text
+    
+    text = str(text).strip()
+    if not text:
+        return text
+    
+    # Strip from the very beginning of the string
+    cleaned = _PREAMBLE_RE.sub('', text.lstrip()).lstrip()
+    
+    # Also strip the first sentence if it still starts with "I " or "As a "
+    first_sentence_end = cleaned.find('. ')
+    if first_sentence_end > 0:
+        first = cleaned[:first_sentence_end + 1]
+        if _re.match(r'^(?:As a |I |Based on my |With my )', first, _re.IGNORECASE):
+            cleaned = cleaned[first_sentence_end + 2:].lstrip()
+    
+    # Final cleanup: remove any remaining leading "I've" or "I have" patterns
+    cleaned = _re.sub(r"^I'?ve\s+", '', cleaned, flags=_re.IGNORECASE)
+    cleaned = _re.sub(r"^I\s+have\s+", '', cleaned, flags=_re.IGNORECASE)
+    cleaned = _re.sub(r"^I\s+", '', cleaned, flags=_re.IGNORECASE)
+    
+    return cleaned.strip()
+
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 def _kv(label: str, value: Any, fallback: str = "N/A"):
@@ -284,61 +342,136 @@ def display_application_simple(data: Dict[str, Any]):
         st.error(f"Phase 3 failed: {data['error']}")
         return
 
-    app   = data.get("1_application_discovery", {})
-    tech  = data.get("2_web_server_stack", {})
-    third = data.get("4_third_party_software", {})
-    repos = data.get("5_code_repositories", {})
-    old   = data.get("6_outdated_software", {})
-    sec   = data.get("7_security_posture", {})
-    apis  = data.get("8_api_discovery", {})
-    db    = data.get("9_database_detection", {})
-    ti    = data.get("10_threat_intelligence", {})
-    leak  = data.get("11_data_leak_detection", {})
-    s3    = data.get("12_s3_bucket_exposure", {})
+    app   = data.get("1_application_discovery", {}) or {}
+    tech  = data.get("2_web_server_stack", {}) or {}
+    third = data.get("4_third_party_software", {}) or {}
+    repos = data.get("5_code_repositories", {}) or {}
+    old   = data.get("6_outdated_software", {}) or {}
+    sec   = data.get("7_security_posture", {}) or {}
+    apis  = data.get("8_api_discovery", {}) or {}
+    db    = data.get("9_database_detection", {}) or {}
+    ti    = data.get("10_threat_intelligence", {}) or {}
+    leak  = data.get("11_data_leak_detection", {}) or {}
+    s3    = data.get("12_s3_bucket_exposure", {}) or {}
 
     # Summary metrics
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Status",       app.get("status", "Unknown"))
-    c2.metric("CMS",          ", ".join(tech.get("cms", [])) or "None")
-    c3.metric("API Endpoints", len(apis.get("api_endpoints", [])))
-    c4.metric("Admin Panels",  len(sec.get("admin_panels", [])))
+    
+    # Get status - try multiple keys
+    status = app.get("status") or app.get("http_status") or app.get("status_code") or "Unknown"
+    c1.metric("Status", status)
+    
+    # Get CMS - try multiple keys
+    cms_list = tech.get("cms", []) or tech.get("cms_detected", []) or []
+    cms_str = ", ".join(cms_list) if cms_list else "None"
+    c2.metric("CMS", cms_str)
+    
+    # Get API endpoints
+    api_count = len(apis.get("api_endpoints", [])) if apis else 0
+    c3.metric("API Endpoints", api_count)
+    
+    # Get admin panels
+    admin_count = len(sec.get("admin_panels", [])) if sec else 0
+    c4.metric("Admin Panels", admin_count)
+    
     st.divider()
 
     # Application discovery
-    if app:
+    if app and not app.get("error"):
         with st.expander("🔍 Application Discovery", expanded=True):
             c1, c2, c3 = st.columns(3)
-            c1.metric("HTTP Status",    app.get("http_status", "N/A"))
-            c2.metric("Response Time",  f"{app.get('response_time_ms', 0)} ms")
-            c3.metric("Server",         str(app.get("server", "Not disclosed"))[:30])
-            _kv("Powered By",    app.get("powered_by"))
-            _kv("Final URL",     app.get("final_url"))
-            _kv("Redirects",     app.get("redirect_count"))
+            http_status = app.get("http_status") or app.get("status_code") or "N/A"
+            response_time = app.get("response_time_ms") or app.get("response_time") or 0
+            server = app.get("server") or app.get("server_header") or "Not disclosed"
+            
+            c1.metric("HTTP Status",    http_status)
+            c2.metric("Response Time",  f"{response_time} ms" if response_time else "N/A")
+            c3.metric("Server",         str(server)[:30])
+            
+            _kv("Powered By",    app.get("powered_by") or app.get("x_powered_by"))
+            _kv("Final URL",     app.get("final_url") or app.get("url"))
+            _kv("Redirects",     app.get("redirect_count") or app.get("redirects"))
+            
+            # Additional application info
+            if app.get("title"):
+                _kv("Page Title", app.get("title"))
+            if app.get("description"):
+                _kv("Meta Description", app.get("description")[:100])
+    else:
+        with st.expander("🔍 Application Discovery", expanded=True):
+            st.info("No application discovery data available")
 
     # Technology stack
     with st.expander("⚙️ Technology Stack", expanded=True):
         c1, c2, c3 = st.columns(3)
         with c1:
             cms = tech.get("cms", [])
+            if not cms:
+                cms = tech.get("cms_detected", [])
             st.markdown(f"**CMS:** {', '.join(cms) if cms else 'None detected'}")
-            _kv("CMS Version", tech.get("cms_version"))
+            cms_ver = tech.get("cms_version") or tech.get("cms_versions", {})
+            if cms_ver:
+                if isinstance(cms_ver, dict):
+                    for cms_name, ver in cms_ver.items():
+                        st.caption(f"  {cms_name}: {ver}")
+                else:
+                    _kv("CMS Version", cms_ver)
         with c2:
             fw = tech.get("frameworks", [])
+            if not fw:
+                fw = tech.get("framework_detected", [])
             st.markdown(f"**Frameworks:** {', '.join(fw) if fw else 'None detected'}")
+            if tech.get("programming_language"):
+                st.caption(f"  Language: {tech.get('programming_language')}")
         with c3:
             js = tech.get("javascript_libraries", [])
+            if not js:
+                js = tech.get("js_libraries", [])
             st.markdown(f"**JS Libraries:** {', '.join(js) if js else 'None detected'}")
-        _kv("Language", tech.get("programming_language"))
-        _kv("CDN",      tech.get("cdn"))
+        
+        # Additional tech info
+        if tech.get("cdn"):
+            _kv("CDN", tech.get("cdn"))
+        if tech.get("analytics"):
+            analytics = tech.get("analytics", [])
+            if analytics:
+                st.markdown(f"**Analytics:** {', '.join(analytics)}")
+        if tech.get("fonts"):
+            fonts = tech.get("fonts", [])
+            if fonts:
+                st.markdown(f"**Fonts:** {', '.join(fonts)}")
+        
+        # Show all detected technologies if available
+        all_detected = tech.get("all_detected", [])
+        if all_detected and len(all_detected) > 0:
+            with st.expander(f"📋 All Detected Technologies ({len(all_detected)})", expanded=False):
+                for tech_item in all_detected:
+                    st.markdown(f"  • {tech_item}")
 
     # Security posture
     with st.expander("🔐 Security Posture", expanded=True):
         headers = sec.get("security_headers", {})
-        if headers:
+        if headers and isinstance(headers, dict):
             st.markdown("**HTTP Security Headers**")
             for h, v in headers.items():
-                icon = "✅" if v else "❌"
-                st.markdown(f"  {icon} **{h}:** {v if v else 'Not set'}")
+                if isinstance(v, dict):
+                    # New format: {"present": bool, "value": str}
+                    present = v.get("present", False)
+                    value = v.get("value", "Not set")
+                    icon = "✅" if present else "❌"
+                    st.markdown(f"  {icon} **{h}:** {value[:80] if value else 'Not set'}")
+                else:
+                    # Old format: just the value
+                    icon = "✅" if v else "❌"
+                    st.markdown(f"  {icon} **{h}:** {v if v else 'Not set'}")
+        
+        # Show header issues if present
+        header_issues = sec.get("header_issues", [])
+        if header_issues:
+            st.markdown("**Security Header Issues**")
+            for issue in header_issues:
+                st.markdown(f"  ⚠️ {issue}")
+        
         score = sec.get("header_score")
         if score is not None:
             st.progress(score / 100)
@@ -348,19 +481,50 @@ def display_application_simple(data: Dict[str, Any]):
         if panels:
             st.markdown(f"**Admin Panels ({len(panels)} found)**")
             for p in panels:
-                icon = "🔓" if p.get("access") == "OPEN" else "🔒"
-                st.markdown(f"  {icon} `{p.get('path')}` — HTTP {p.get('status')} — {p.get('access','')}")
+                if isinstance(p, dict):
+                    icon = "🔓" if p.get("access") == "OPEN" else "🔒"
+                    path = p.get("path") or p.get("url") or p.get("target", "Unknown")
+                    status = p.get("status", "Unknown")
+                    access = p.get("access", "")
+                    st.markdown(f"  {icon} `{path}` — HTTP {status}" + (f" — {access}" if access else ""))
+                else:
+                    st.markdown(f"  • {p}")
 
         cookies = sec.get("cookie_security", [])
         if cookies:
             st.markdown("**Cookie Security**")
             for c in cookies:
-                name = c.get("name") or c.get("cookie", "?")
-                issues = c.get("issues", [])
-                if issues:
-                    st.markdown(f"  ⚠️ `{name}`: {'; '.join(issues)}")
+                if isinstance(c, dict):
+                    name = c.get("name") or c.get("cookie", "?")
+                    issues = c.get("issues", [])
+                    # Check individual security flags
+                    flags = []
+                    if not c.get("httponly"):
+                        flags.append("Missing HttpOnly")
+                    if not c.get("secure"):
+                        flags.append("Missing Secure")
+                    if not c.get("samesite"):
+                        flags.append("Missing SameSite")
+                    
+                    if flags:
+                        st.markdown(f"  ⚠️ `{name}`: {'; '.join(flags)}")
+                    else:
+                        st.markdown(f"  ✅ `{name}`: Secure")
                 else:
-                    st.markdown(f"  ✅ `{name}`: Secure")
+                    st.markdown(f"  • {c}")
+        
+        # WAF Detection
+        waf = sec.get("waf_detection", {})
+        if waf and isinstance(waf, dict):
+            detected = waf.get("detected", False)
+            if detected:
+                st.markdown("**WAF Detection**")
+                st.markdown(f"  🛡️ **{waf.get('name', 'Unknown WAF')}** detected")
+                if waf.get("confidence"):
+                    st.caption(f"  Confidence: {waf.get('confidence')}")
+            else:
+                st.markdown("**WAF Detection**")
+                st.markdown("  ❌ No WAF detected")
 
     # API Discovery
     rest = apis.get("api_endpoints", [])
@@ -743,12 +907,99 @@ def display_correlation_simple(data: Dict[str, Any]):
     # APT mapping markdown (if present from scanner)
     if apt_md and isinstance(apt_md, str) and apt_md.strip():
         with st.expander("🗺️ APT Threat Mapping", expanded=False):
-            st.markdown(apt_md)
+            st.markdown(_strip_ai_preamble(apt_md))
 
     # Attack vectors markdown (if present from scanner)
     if attack_vectors_md and isinstance(attack_vectors_md, str) and attack_vectors_md.strip():
         with st.expander("🎯 Attack Vector Analysis", expanded=False):
-            st.markdown(attack_vectors_md)
+            st.markdown(_strip_ai_preamble(attack_vectors_md))
+
+    # ── Publicly Exploitable CVEs — separate collapsed section ──
+    exploitable = data.get("exploitable_cves", [])
+    if not exploitable:
+        # Build from cves_all if scanner didn't pre-compute it
+        exploitable = [
+            v for v in cves_all
+            if isinstance(v, dict) and (
+                (v.get("metasploit", 0) or 0) > 0
+                or (v.get("exploitdb", 0) or 0) > 0
+                or (v.get("github_pocs", 0) or 0) > 0
+            )
+        ]
+    if exploitable:
+        with st.expander(f"🔓 Publicly Exploitable CVEs ({len(exploitable)} with known PoC/Metasploit)", expanded=False):
+            st.caption("These CVEs have confirmed public exploit code — Metasploit modules, ExploitDB entries, or GitHub PoCs. Prioritise patching these above all others.")
+            for v in exploitable:
+                if not isinstance(v, dict):
+                    continue
+                sev    = v.get("severity", "Low")
+                icon   = _severity_icon(sev)
+                cve    = v.get("cve", v.get("cwe", "N/A"))
+                tech   = v.get("tech", "")
+                ver    = v.get("version", "")
+                cvss   = v.get("cvss", "")
+                desc   = v.get("desc", v.get("description", ""))
+                msf    = v.get("metasploit", 0) or 0
+                edb    = v.get("exploitdb", 0) or 0
+                gh     = v.get("github_pocs", 0) or 0
+                badges = []
+                if msf:  badges.append(f"🟥 Metasploit ({msf})")
+                if edb:  badges.append(f"🟧 ExploitDB ({edb})")
+                if gh:   badges.append(f"🟨 GitHub PoCs ({gh})")
+                label = f"{tech} {ver}".strip() if tech else ""
+                meta  = "  |  ".join(filter(None, [label, f"CVSS {cvss}" if cvss else ""]))
+                st.markdown(
+                    f"{icon} **{cve}** — {sev}"
+                    + (f"  *({meta})*" if meta else "")
+                    + ("  " + "  ".join(badges) if badges else "")
+                )
+                if desc:
+                    st.caption(f"  {desc[:200]}")
+
+    # ── Potential False Positives — collapsed at the bottom ──
+    false_positives = data.get("false_positives", [])
+    if false_positives:
+        with st.expander(f"⚠️ Potential False Positives ({len(false_positives)})", expanded=False):
+            st.caption("These findings were flagged during scanning but identified as likely false positives. Review manually before acting on them.")
+            for fp in false_positives:
+                if not isinstance(fp, dict):
+                    continue
+                itype = fp.get("type", "Unknown")
+                hdr   = fp.get("header", "")
+                desc  = fp.get("description", "")
+                st.markdown(f"⚠️ **{itype}**" + (f" — `{hdr}`" if hdr else ""))
+                if desc:
+                    st.caption(f"  {desc}")
+
+    # ── Patches Available / Remediation Guidance — collapsed section ──
+    patches_available = data.get("patches_available", [])
+    if patches_available:
+        with st.expander(f"🔧 Patches & Updates Available ({len(patches_available)})", expanded=False):
+            st.caption("These vulnerabilities have confirmed patches or updates available. Prioritise applying these remediations.")
+            for patch_info in patches_available:
+                if not isinstance(patch_info, dict):
+                    continue
+                cve = patch_info.get("cve", "Unknown")
+                tech = patch_info.get("tech", "")
+                current_ver = patch_info.get("current_version", "")
+                patched_ver = patch_info.get("patched_version", "")
+                severity = patch_info.get("severity", "Medium")
+                icon = _severity_icon(severity)
+                release_date = patch_info.get("patch_release_date", "")
+                
+                st.markdown(f"{icon} **{cve}** — {tech} {current_ver}")
+                st.caption(f"  Patched in: {patched_ver}" + (f"  |  Released: {release_date}" if release_date else ""))
+                
+                # Show patch source
+                sources = []
+                if patch_info.get("vendor_advisory"):
+                    sources.append("Vendor Advisory")
+                if patch_info.get("security_bulletin"):
+                    sources.append("Security Bulletin")
+                if patch_info.get("patch_url"):
+                    sources.append(f"[Download]({patch_info['patch_url']})")
+                if sources:
+                    st.caption(f"  Sources: {' | '.join(sources)}")
 
 
 # ── Phase 5: Risk Assessment ──────────────────────────────────────────────────
@@ -821,7 +1072,7 @@ def display_risk_simple(data: Dict[str, Any]):
     exec_summary = data.get("executive_summary", "")
     if exec_summary and isinstance(exec_summary, str) and exec_summary.strip():
         with st.expander("📋 Executive Summary", expanded=True):
-            st.text(exec_summary)
+            st.text(_strip_ai_preamble(exec_summary))
 
     # ── Key Findings ──
     if findings:
@@ -844,7 +1095,7 @@ def display_risk_simple(data: Dict[str, Any]):
                         st.markdown(f"{dicon} **{dim_name.replace('_',' ').title()}** — {dl}  (score: {ds}/4, weight: {dw})")
                 interp = risk_matrix.get("interpretation", "")
                 if interp:
-                    st.info(interp)
+                    st.info(_strip_ai_preamble(interp))
 
         # Multi-dimensional score breakdown
         multi = data.get("multidimensional_score", {})
@@ -860,7 +1111,7 @@ def display_risk_simple(data: Dict[str, Any]):
                         st.code(breakdown, language="text")
                 interp = multi.get("interpretation", "")
                 if interp:
-                    st.info(interp)
+                    st.info(_strip_ai_preamble(interp))
 
     # ── Business Risk Detail (new schema) ──
     biz_risk = data.get("business_risk", {})
@@ -873,7 +1124,7 @@ def display_risk_simple(data: Dict[str, Any]):
                     st.markdown(f"  • {c}")
             analysis = biz_risk.get("analysis", "")
             if analysis:
-                st.write(analysis)
+                st.write(_strip_ai_preamble(str(analysis)))
 
     # ── Infrastructure Risk Detail (new schema) ──
     infra_risk = data.get("infrastructure_risk", {})
@@ -886,7 +1137,7 @@ def display_risk_simple(data: Dict[str, Any]):
                     st.markdown(f"  • {a}")
             analysis = infra_risk.get("analysis", "")
             if analysis:
-                st.write(analysis)
+                st.write(_strip_ai_preamble(str(analysis)))
 
     # ── Application Risk Detail (new schema) ──
     app_risk = data.get("application_risk", {})
@@ -899,7 +1150,7 @@ def display_risk_simple(data: Dict[str, Any]):
                     st.markdown(f"  • {c}")
             analysis = app_risk.get("analysis", "")
             if analysis:
-                st.write(analysis)
+                st.write(_strip_ai_preamble(str(analysis)))
 
     # ── Business Impact ──
     impact = data.get("business_impact", {})

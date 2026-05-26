@@ -9,6 +9,7 @@ __pycache__/
 dist/
 build/
 *.whl
+*.db
 
 # Virtual environment
 venv/
@@ -46,3 +47,6 @@ desktop.ini
 # Temp files
 *.tmp
 *.bak
+
+# Kiro IDE
+.kiro/

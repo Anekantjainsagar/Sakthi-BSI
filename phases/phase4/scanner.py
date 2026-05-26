@@ -2374,7 +2374,7 @@ Consider conducting active penetration testing for comprehensive assessment.
         security_summary = "\n".join([f"- {s['type']}: {s.get('header', s.get('cookie', 'Unknown'))}" for s in self.security_issues[:10]])
         apt_summary = "\n".join([f"- {apt['name']}: {apt['description'][:200]}..." for apt in apts[:30]])
         
-        prompt = f"""You are a security intelligence analyst preparing a defensive report.
+        prompt = f"""Produce a defensive threat intelligence report. Output only the report content — no preamble, no self-introduction, no phrases like "As a security analyst..." or "Based on my analysis...".
 
 TARGET PROFILE:
 - Domain: {self.domain}
@@ -2392,29 +2392,21 @@ CONFIGURATION ISSUES:
 KNOWN THREAT GROUPS (from MITRE ATT&CK framework):
 {apt_summary}
 
-DEFENSIVE INTELLIGENCE REQUEST:
+TASK: Identify the 5 threat groups that pose the highest risk to this specific organisation.
 
-Based on this company's specific industry ({sector}) and their vulnerabilities, identify which 5 threat groups pose the highest risk.
-
-Consider:
+Selection criteria:
 1. Groups that historically target the {sector} industry
-2. Groups whose techniques align with the discovered vulnerabilities
-3. The company's likely value as a target based on their industry
+2. Groups whose TTPs align with the discovered vulnerabilities
+3. The organisation's value as a target given its industry and data
 
-For each of the TOP 5 threat groups, provide:
+For each of the TOP 5 threat groups provide:
 1. Group Name
 2. Risk Relevance Score (1-10)
-3. Why they would target a {sector} company
-4. Technical Alignment with discovered vulnerabilities
-5. Historical attacks on similar {sector} organizations
+3. Why they would target a {sector} organisation
+4. Technical alignment with the discovered vulnerabilities
+5. Historical attacks on similar {sector} organisations
 
-Format response clearly with headers for each group.
-
-Focus on realistic defensive intelligence based on:
-- Industry targeting patterns
-- Technical capabilities
-- Historical attack patterns
-- Geopolitical factors
+Format with clear headers for each group. Write in third person. Do not introduce yourself or describe your methodology.
 """
 
         if self.use_gemini:
@@ -2633,7 +2625,7 @@ No specific MITRE ATT&CK techniques were identified due to absence of exploitabl
         # For Scenario 2 entry: prefer dark web/credential intel over CVEs if available
         s2_entry_context = leak_summary if leak_summary != "No data leaks or breaches detected." else _fmt_vulns(s2_vulns)
 
-        prompt = f"""You are a senior offensive security analyst with 12 years of red team and threat intelligence experience. You are writing a realistic threat assessment for a defensive security report.
+        prompt = f"""Produce a threat assessment report for {self.domain}. Output only the report content — no preamble, no self-introduction, no phrases like "As a senior analyst..." or "Based on my experience...". Write in third person throughout.
 
 TARGET: {self.domain} ({self.threat_intel.get('sector', 'Unknown').upper()} sector)
 
@@ -2651,49 +2643,42 @@ TARGET: {self.domain} ({self.threat_intel.get('sector', 'Unknown').upper()} sect
 - Admin Panels Found: {admin_context}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CRITICAL INSTRUCTION: Generate 3 COMPLETELY DIFFERENT attack scenarios.
-Each scenario MUST use a different attacker persona, a different entry point,
+INSTRUCTION: Generate 3 COMPLETELY DIFFERENT attack scenarios.
+Each scenario MUST use a different threat actor type, a different entry point,
 and a different attack path. DO NOT repeat the same entry point across scenarios.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ATTACKER PERSONAS — FIXED (do not change or merge these)
+THREAT ACTOR PROFILES — FIXED (do not change or merge these)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PERSONA 1 — "The Ransomware Operator"
-  Role: Financially motivated cybercriminal running a Ransomware-as-a-Service (RaaS) operation
-  Backstory: 7 years in cybercrime, part of an Eastern European RaaS group specialising in
-    double-extortion (encrypt + exfiltrate). Has hit dozens of chemical/industrial companies. Uses
-    automated scanning (Shodan, Nuclei, Metasploit) to find targets fast. Prefers high-CVSS CVEs that
-    commodity tools can exploit in under 2 hours. Moves quickly — in and out within 48-72 hours.
+PROFILE 1 — "Ransomware Operator"
+  Type: Financially motivated cybercriminal, Ransomware-as-a-Service (RaaS) operation
+  Characteristics: Uses automated scanning (Shodan, Nuclei, Metasploit) to find targets fast.
+    Prefers high-CVSS CVEs exploitable with commodity tools. Moves quickly — in and out within 48-72 hours.
   Motivation: Maximum financial return — ransomware payment + dark web data sale
   Toolset: Metasploit, Cobalt Strike, automated exploit frameworks, ransomware payloads
-  Risk Tolerance: Medium — triggers alerts but doesn't care after deployment
   ASSIGNED ENTRY VULNERABILITIES (use these, not others):
 {_fmt_vulns(s1_vulns)}
 
-PERSONA 2 — "The Nation-State APT Operative"
-  Role: State-sponsored intelligence operative targeting chemical/industrial IP
-  Backstory: 12+ years in signals intelligence and cyber operations. Member of an APT group focused on
-    stealing trade secrets, chemical formulas, R&D data, and supply chain intelligence. Patient and
-    methodical — maintains access for months undetected. Prefers legitimate credentials and
-    living-off-the-land techniques (LOLBins) to avoid EDR. When dark web intelligence is available
-    (leaked credentials, domain records), this is always the preferred entry over noisy CVE exploitation.
-  Motivation: Espionage — steal proprietary formulas, R&D data, client lists, supply chain data
+PROFILE 2 — "Nation-State APT Operative"
+  Type: State-sponsored intelligence operative targeting industry IP
+  Characteristics: Patient and methodical — maintains access for months undetected. Prefers legitimate
+    credentials and living-off-the-land techniques (LOLBins) to avoid EDR. When dark web intelligence
+    is available (leaked credentials, domain records), this is always the preferred entry over noisy
+    CVE exploitation.
+  Motivation: Espionage — steal proprietary data, R&D, client lists, supply chain intelligence
   Toolset: Custom implants, LOLBins, legitimate admin tools, stolen/purchased credentials
-  Risk Tolerance: Very low — stealth paramount; aborts if detection risk is high
   ASSIGNED ENTRY CONTEXT (intelligence-led approach):
 {s2_entry_context}
 
-PERSONA 3 — "The Opportunistic Script Kiddie / Hacktivist"
-  Role: Low-to-medium skill opportunist / hacktivist
-  Backstory: Found this target via a Shodan scan or Google dork. No custom exploits — purely uses
-    public CVE PoCs with Metasploit modules, SQLMap, Nikto, and misconfiguration checkers. Motivated
-    by notoriety, ideology (anti-chemical-industry sentiment), or a quick data dump for social media.
-    Loud and fast — doesn't care about being detected after the fact.
+PROFILE 3 — "Opportunistic Attacker / Hacktivist"
+  Type: Low-to-medium skill opportunist or hacktivist
+  Characteristics: Found this target via Shodan scan or Google dork. No custom exploits — uses public
+    CVE PoCs with Metasploit modules, SQLMap, Nikto, and misconfiguration checkers. Motivated by
+    notoriety, ideology, or a quick data dump.
   Motivation: Notoriety, hacktivism, data dump, website defacement, cryptomining
   Toolset: Metasploit, SQLMap, Nikto, public PoC scripts, automated scanners
-  Risk Tolerance: High — noise is acceptable
   ASSIGNED ENTRY (misconfigurations + publicly exploitable CVEs only):
 {_fmt_config(s3_config_issues)}
 {_fmt_vulns(s3_vulns)}
@@ -2704,8 +2689,9 @@ ACCURACY RULES — MANDATORY:
    If IntelX shows "X records found", say "X intelligence records found" — NOT "credentials confirmed".
    If no breach data exists, do NOT fabricate credential leaks.
 2. Each scenario must use ONLY its assigned entry vulnerabilities/context listed above.
-3. Attacker stories must be written in FIRST PERSON from that persona's perspective.
-4. Attack paths must be technically plausible based on the actual findings.
+3. Write all attacker descriptions in THIRD PERSON (e.g. "The attacker would..." not "I would...").
+4. Do NOT include any introductory sentence about who is writing this report.
+5. Attack paths must be technically plausible based on the actual findings.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ## 1. TOP 3 ATTACK SCENARIOS
@@ -2714,19 +2700,15 @@ ACCURACY RULES — MANDATORY:
 
 ### Scenario 1: [Name it after the actual exploit method, e.g. "CVE-2023-XXXX Ransomware Double-Extortion Chain"]
 
-**Attacker Profile:** Ransomware Operator (Persona 1)
+**Threat Actor:** Ransomware Operator (Profile 1)
 
-**Attacker's Story (5-6 sentences, FIRST PERSON as the Ransomware Operator):**
-How you discovered {self.domain} (scanning tool / what you found). What specific vulnerability/version
-caught your attention and why. Your confidence level and why this target is worth attacking. Your exact
-plan — which CVE you exploit first, how you move to high-value data. Expected financial outcome and
-timeline. DO NOT mention dark web credentials unless the Dark Web Intelligence section above confirms
-actual breach data.
+**Threat Assessment (5-6 sentences, third person):**
+How this type of attacker would discover {self.domain} (scanning tool / what they would find). What specific vulnerability/version would attract their attention and why. Their confidence level and why this target is worth attacking. Their exact plan — which CVE they exploit first, how they move to high-value data. Expected financial outcome and timeline. DO NOT mention dark web credentials unless the Dark Web Intelligence section above confirms actual breach data.
 
-**Entry Point:** [Specific CVE from Persona 1's assigned list above — include CVE ID and tech name]
+**Entry Point:** [Specific CVE from Profile 1's assigned list above — include CVE ID and tech name]
 
 **Exploitation Chain:**
-1. [Discovery: how Persona 1 found and fingerprinted this target]
+1. [Discovery: how this attacker type would find and fingerprint this target]
 2. [Initial Access: specific CVE exploit + tool used]
 3. [Foothold: how persistence is established]
 4. [Privilege Escalation: specific technique]
@@ -2736,7 +2718,7 @@ actual breach data.
 **Lateral Movement:** [Which internal systems targeted, what credentials stolen, how pivot occurs]
 
 **Business Impact:**
-- Data at Risk: [Specific types based on business context — chemical formulas, client data, etc.]
+- Data at Risk: [Specific types based on business context]
 - Estimated Downtime: [Hours or days]
 - Ransom Demand Range: [Calibrated to company size from business context]
 - Total Financial Exposure: [Including recovery, legal, reputational costs]
@@ -2760,17 +2742,17 @@ actual breach data.
 
 ### Scenario 2: [Name it after actual method, e.g. "APT Credential-Led Silent Infiltration for Industrial Espionage"]
 
-**Attacker Profile:** Nation-State APT Operative (Persona 2)
+**Threat Actor:** Nation-State APT Operative (Profile 2)
 
-**Attacker's Story (5-6 sentences, FIRST PERSON as the APT Operative):**
-How your intelligence unit identified {self.domain} as a target (industry targeting, OSINT).
-What intelligence you have from the assigned entry context above (be accurate — report exactly what
+**Threat Assessment (5-6 sentences, third person):**
+How this type of threat actor would identify {self.domain} as a target (industry targeting, OSINT).
+What intelligence is available from the assigned entry context above (be accurate — report exactly what
 the findings show; do NOT say "working credentials found" unless breach data explicitly confirms it).
-Your patient, stealthy approach — how you plan to enter without triggering alerts.
-Your long-term objective (what data you are stealing and why it matters to your state sponsor).
-Your dwell time target and how you maintain access undetected.
+The patient, stealthy approach — how entry would occur without triggering alerts.
+The long-term objective (what data is being stolen and why it matters to the state sponsor).
+Dwell time target and how access would be maintained undetected.
 
-**Entry Point:** [Specific method from Persona 2's assigned entry context — credential reuse, dark web
+**Entry Point:** [Specific method from Profile 2's assigned entry context — credential reuse, dark web
 intel, or CVE with custom obfuscation if no breach data exists]
 
 **Exploitation Chain:**
@@ -2778,7 +2760,7 @@ intel, or CVE with custom obfuscation if no breach data exists]
 2. [Initial access method — credential-based or CVE with custom obfuscation]
 3. [Establishing persistent, stealthy foothold]
 4. [Internal reconnaissance using LOLBins / legitimate tools]
-5. [Locating and staging target data (R&D, chemical formulas, client lists)]
+5. [Locating and staging target data (R&D, formulas, client lists)]
 6. [Slow, encrypted exfiltration over days/weeks to avoid detection]
 
 **Lateral Movement:** [Stealthy pivoting methods, credential harvesting, target systems]
@@ -2808,16 +2790,16 @@ intel, or CVE with custom obfuscation if no breach data exists]
 
 ### Scenario 3: [Name it after actual method, e.g. "Misconfiguration Exploitation for Defacement and Data Dump"]
 
-**Attacker Profile:** Opportunistic Script Kiddie / Hacktivist (Persona 3)
+**Threat Actor:** Opportunistic Attacker / Hacktivist (Profile 3)
 
-**Attacker's Story (5-6 sentences, FIRST PERSON as the Script Kiddie / Hacktivist):**
-How you found {self.domain} (Shodan scan, Google dork, or industry targeting for hacktivism).
-Which specific misconfiguration or public CVE made this an easy target.
-What automated tools you ran (Metasploit module name, SQLMap, Nikto, etc.).
-Your goal — defacement, data dump for paste sites, or cryptominer installation.
-Why this was low-effort and why you chose this target over others.
+**Threat Assessment (5-6 sentences, third person):**
+How this type of attacker would find {self.domain} (Shodan scan, Google dork, or industry targeting).
+Which specific misconfiguration or public CVE makes this an easy target.
+What automated tools would be run (Metasploit module name, SQLMap, Nikto, etc.).
+The goal — defacement, data dump for paste sites, or cryptominer installation.
+Why this is low-effort and why this target would be chosen over others.
 
-**Entry Point:** [Specific misconfiguration or medium-CVSS CVE from Persona 3's assigned list — NOT
+**Entry Point:** [Specific misconfiguration or medium-CVSS CVE from Profile 3's assigned list — NOT
 the same CVE used in Scenario 1 or 2]
 
 **Exploitation Chain:**
@@ -2827,7 +2809,7 @@ the same CVE used in Scenario 1 or 2]
 4. [Quick data grab, defacement, or cryptominer drop]
 5. [Exit — loud and unconcerned about forensics]
 
-**Lateral Movement:** [Whether they attempt deeper access or stay surface-level, and why]
+**Lateral Movement:** [Whether deeper access is attempted or surface-level only, and why]
 
 **Business Impact:**
 - Immediate Impact: [Defacement / data dump / service disruption]
@@ -3379,7 +3361,43 @@ For each technique, briefly state which vulnerability or finding enables it.
         for i, item in enumerate(remediation_ui[:15], 1):
             item['priority'] = i
 
-        # 6) Return full payload for UI
+        # 6) Collect false positives that were silently dropped — expose them for UI
+        false_positives = []
+        try:
+            sm = self.phase2_data.get('security_misconfigs', {}) if self.phase2_data else {}
+            for panel in sm.get('open_admin_panels', []):
+                if panel.get('false_positive'):
+                    false_positives.append({
+                        'type': 'Admin Panel (False Positive)',
+                        'header': panel.get('url', panel.get('target', '')),
+                        'description': panel.get('reason', 'Flagged as false positive during infrastructure scan'),
+                        'severity': panel.get('severity', 'INFO'),
+                    })
+        except Exception:
+            pass
+
+        # 7) CVEs with confirmed public exploit code (Metasploit / ExploitDB / GitHub PoC)
+        exploitable_cves = [
+            v for v in self.cve_results
+            if (v.get('metasploit', 0) or 0) > 0
+            or (v.get('exploitdb', 0) or 0) > 0
+            or (v.get('github_pocs', 0) or 0) > 0
+        ]
+        exploitable_payload = []
+        for v in sorted(exploitable_cves, key=lambda x: x.get('composite_score', 0), reverse=True):
+            exploitable_payload.append({
+                'cve':        v.get('cve', ''),
+                'tech':       v.get('tech', ''),
+                'version':    v.get('version', ''),
+                'cvss':       v.get('cvss', 0),
+                'severity':   v.get('severity', ''),
+                'desc':       v.get('desc', ''),
+                'metasploit': v.get('metasploit', 0),
+                'exploitdb':  v.get('exploitdb', 0),
+                'github_pocs': v.get('github_pocs', 0),
+            })
+
+        # 8) Return full payload for UI
         return {
             "domain": self.domain,
             "phase1_summary": phase1_summary,
@@ -3388,6 +3406,8 @@ For each technique, briefly state which vulnerability or finding enables it.
             "issues_by_category": issues_by_category,
             "cves_all": cves,
             "cves_tech_only": tech_cves,
+            "exploitable_cves": exploitable_payload,
+            "false_positives": false_positives,
             "apt_mapping_md": self.threat_intel.get("apt_mapping", ""),
             "attack_vectors_md": self.attack_vectors if isinstance(self.attack_vectors, str) else "",
             "remediation_priority": remediation_ui[:15],
@@ -3398,6 +3418,7 @@ For each technique, briefly state which vulnerability or finding enables it.
                 "high_cves": len([v for v in self.cve_results if 7 <= v.get('cvss', 0) < 9]),
                 "critical_issues": len(issues_by_category["critical"]),
                 "high_issues": len(issues_by_category["high"]),
+                "exploitable_cves": len(exploitable_payload),
             }
         }
 

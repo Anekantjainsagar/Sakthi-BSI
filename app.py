@@ -122,12 +122,18 @@ class BSIOrchestrator:
             
             # ✅ FIXED: run_full_scan is now synchronous (no async/await needed)
             result = scanner.run_full_scan()
+            
+            # Ensure result is a dict
+            if not isinstance(result, dict):
+                result = {'error': 'Phase 3 returned invalid data type'}
                 
             self.results['application_landscape'] = result
             self.results['status']['application_landscape'] = 'completed'
             return result
         except Exception as e:
             self.results['status']['application_landscape'] = 'failed'
+            import traceback
+            traceback.print_exc()
             return {'error': str(e)}
         
     def run_correlation_analysis(self, domain: str) -> Dict[str, Any]:

@@ -58,19 +58,63 @@ class CompleteBSIScanner:
         print(f"{'='*80}\n")
         
         if not self.fetch_website():
-            print("Cannot access website. Exiting...")
+            print("Cannot access website. Returning partial results...")
+            # Return what we have instead of empty results
             return self.results
         
-        self.application_discovery()
-        self.web_server_technology_stack()
-        self.erp_sap_detection()
-        self.third_party_software_inventory()
-        self.code_repository_analysis()
-        self.outdated_software_detection()
-        self.security_posture_analysis()
-        self.api_endpoint_discovery()
-        self.database_detection()
-        # ✅ ADD THESE NEW API CALLS HERE
+        try:
+            print("\n[1/9] Application Discovery...")
+            self.application_discovery()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[2/9] Web Server Technology Stack...")
+            self.web_server_technology_stack()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[3/9] ERP/SAP Detection...")
+            self.erp_sap_detection()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[4/9] Third Party Software...")
+            self.third_party_software_inventory()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[5/9] Code Repository Analysis...")
+            self.code_repository_analysis()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[6/9] Outdated Software Detection...")
+            self.outdated_software_detection()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[7/9] Security Posture Analysis...")
+            self.security_posture_analysis()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[8/9] API Endpoint Discovery...")
+            self.api_endpoint_discovery()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
+        
+        try:
+            print("[9/9] Database Detection...")
+            self.database_detection()
+        except Exception as e:
+            print(f"  ⚠️ Error: {e}")
         
         # Extract IP addresses from earlier results (if available)
         ip_addresses = []
@@ -81,113 +125,146 @@ class CompleteBSIScanner:
             import socket
             ip = socket.gethostbyname(self.domain)
             ip_addresses = [ip]
-        except:
-            pass
+            print(f"\n[Threat Intel] Resolved IP: {ip}")
+        except Exception as e:
+            print(f"\n[Threat Intel] Could not resolve IP: {e}")
         
-        # Call NEW API methods
+        # Call NEW API methods with error handling
         if ip_addresses:
-            threat_data = self.query_threat_intel_apis(ip_addresses)
-            if threat_data:
-                self.results['10_threat_intelligence'] = threat_data
+            try:
+                threat_data = self.query_threat_intel_apis(ip_addresses)
+                if threat_data:
+                    self.results['10_threat_intelligence'] = threat_data
+            except Exception as e:
+                print(f"  ⚠️ Threat Intel Error: {e}")
             
-            leak_data = self.query_leak_detection_apis(self.domain, ip_addresses)
-            if leak_data:
-                self.results['11_leak_detection'] = leak_data
+            try:
+                leak_data = self.query_leak_detection_apis(self.domain, ip_addresses)
+                if leak_data:
+                    self.results['11_leak_detection'] = leak_data
+            except Exception as e:
+                print(f"  ⚠️ Leak Detection Error: {e}")
         
-        s3_data = self.query_grayhatwarfare(self.domain)
-        if s3_data:
-            self.results['12_s3_exposure'] = s3_data
+        try:
+            s3_data = self.query_grayhatwarfare(self.domain)
+            if s3_data:
+                self.results['12_s3_exposure'] = s3_data
+        except Exception as e:
+            print(f"  ⚠️ S3 Detection Error: {e}")
 
         # ✅ ADD THIS - Store WhatCMS in web server stack (phase 2)
-        cms_data = self.query_whatcms(self.domain)
-        if cms_data and cms_data.get('status') == 'success':
-            webtech = self.results.get('2_web_server_stack', {})
-            webtech['whatcms_api'] = cms_data
-            # Merge WhatCMS CMS detections into cms list (WhatCMS is more reliable)
-            cms_names_from_api = [
-                t['name'] for t in cms_data.get('technologies', [])
-                if 'CMS' in t.get('categories', []) or 'Other CMS' in t.get('categories', [])
-            ]
-            if cms_names_from_api:
-                current_cms = webtech.get('cms', [])
-                # Remove false local detections if WhatCMS disagrees
-                for api_cms in cms_names_from_api:
-                    if api_cms not in current_cms:
-                        current_cms.append(api_cms)
-                # If WhatCMS found a different CMS, clear conflicting local ones
-                local_only = [c for c in current_cms if c not in cms_names_from_api]
-                for c in local_only:
-                    if c in current_cms:
-                        current_cms.remove(c)
-                        print(f"   ℹ️ Removed false-positive CMS '{c}' — WhatCMS identifies {cms_names_from_api}")
-                webtech['cms'] = current_cms
-                # Update cms_versions with WhatCMS versions
-                for t in cms_data.get('technologies', []):
-                    if t['name'] in cms_names_from_api and t.get('version'):
-                        webtech.setdefault('cms_versions', {})[t['name']] = t['version']
-                webtech['all_detected'] = (
-                    webtech.get('cms', []) +
-                    webtech.get('frameworks', []) +
-                    webtech.get('javascript_libraries', []) +
-                    webtech.get('analytics', []) +
-                    webtech.get('cdn', []) +
-                    webtech.get('fonts', [])
-                )
-            self.results['2_web_server_stack'] = webtech
+        try:
+            cms_data = self.query_whatcms(self.domain)
+            if cms_data and cms_data.get('status') == 'success':
+                webtech = self.results.get('2_web_server_stack', {})
+                webtech['whatcms_api'] = cms_data
+                # Merge WhatCMS CMS detections into cms list (WhatCMS is more reliable)
+                cms_names_from_api = [
+                    t['name'] for t in cms_data.get('technologies', [])
+                    if 'CMS' in t.get('categories', []) or 'Other CMS' in t.get('categories', [])
+                ]
+                if cms_names_from_api:
+                    current_cms = webtech.get('cms', [])
+                    # Remove false local detections if WhatCMS disagrees
+                    for api_cms in cms_names_from_api:
+                        if api_cms not in current_cms:
+                            current_cms.append(api_cms)
+                    # If WhatCMS found a different CMS, clear conflicting local ones
+                    local_only = [c for c in current_cms if c not in cms_names_from_api]
+                    for c in local_only:
+                        if c in current_cms:
+                            current_cms.remove(c)
+                            print(f"   ℹ️ Removed false-positive CMS '{c}' — WhatCMS identifies {cms_names_from_api}")
+                    webtech['cms'] = current_cms
+                    # Update cms_versions with WhatCMS versions
+                    for t in cms_data.get('technologies', []):
+                        if t['name'] in cms_names_from_api and t.get('version'):
+                            webtech.setdefault('cms_versions', {})[t['name']] = t['version']
+                    webtech['all_detected'] = (
+                        webtech.get('cms', []) +
+                        webtech.get('frameworks', []) +
+                        webtech.get('javascript_libraries', []) +
+                        webtech.get('analytics', []) +
+                        webtech.get('cdn', []) +
+                        webtech.get('fonts', [])
+                    )
+                self.results['2_web_server_stack'] = webtech
+        except Exception as e:
+            print(f"  ⚠️ WhatCMS Error: {e}")
         
         # ✅ ADD THIS NEW CALL (Add before the final return)
-        pastebin_data = self.query_pastebin_leaks(self.domain)
-        if pastebin_data and pastebin_data.get('status') in ['success', 'no_results']:
-            # Ensure leak_detection dictionary exists
-            if '11_leak_detection' not in self.results:
-                self.results['11_leak_detection'] = {}
-            
-            # Store PasteBin data in leak detection section
-            self.results['11_leak_detection']['pastebin_search'] = pastebin_data
-
+        try:
+            pastebin_data = self.query_pastebin_leaks(self.domain)
+            if pastebin_data and pastebin_data.get('status') in ['success', 'no_results']:
+                # Ensure leak_detection dictionary exists
+                if '11_leak_detection' not in self.results:
+                    self.results['11_leak_detection'] = {}
+                
+                # Store PasteBin data in leak detection section
+                self.results['11_leak_detection']['pastebin_search'] = pastebin_data
+        except Exception as e:
+            print(f"  ⚠️ PasteBin Error: {e}")
 
         # ✅ NEW: Project Honey Pot IP Reputation Check
-        honeypot_data = self.query_projecthoneypot(self.domain)
-        if honeypot_data and honeypot_data.get('status') == 'active':
-            # Store in threat intelligence section (NOT leak detection)
-            if '10_threat_intelligence' not in self.results:
-                self.results['10_threat_intelligence'] = {}
-            self.results['10_threat_intelligence']['honeypot'] = honeypot_data
+        try:
+            honeypot_data = self.query_projecthoneypot(self.domain)
+            if honeypot_data and honeypot_data.get('status') == 'active':
+                # Store in threat intelligence section (NOT leak detection)
+                if '10_threat_intelligence' not in self.results:
+                    self.results['10_threat_intelligence'] = {}
+                self.results['10_threat_intelligence']['honeypot'] = honeypot_data
+        except Exception as e:
+            print(f"  ⚠️ Honey Pot Error: {e}")
 
         # ✅ IntelligenceX Dark Web Search
-        intelx_data = self.query_intelligencex(self.domain)
-        if intelx_data and intelx_data.get('status') == 'active':
-            if '11_leak_detection' not in self.results:
-                self.results['11_leak_detection'] = {}
-            self.results['11_leak_detection']['intelx'] = intelx_data
+        try:
+            intelx_data = self.query_intelligencex(self.domain)
+            if intelx_data and intelx_data.get('status') == 'active':
+                if '11_leak_detection' not in self.results:
+                    self.results['11_leak_detection'] = {}
+                self.results['11_leak_detection']['intelx'] = intelx_data
+        except Exception as e:
+            print(f"  ⚠️ IntelligenceX Error: {e}")
 
         # ✅ ENHANCEMENT: Organize additional threat intel APIs under proper sections
         if self.domain:
-            vt_result = self.check_virustotal_v2(domain=self.domain)
-            if vt_result and vt_result.get('status') != 'not_configured':
-                if '10_threat_intelligence' not in self.results:
-                    self.results['10_threat_intelligence'] = {}
-                self.results['10_threat_intelligence']['virustotal'] = vt_result
+            try:
+                vt_result = self.check_virustotal_v2(domain=self.domain)
+                if vt_result and vt_result.get('status') != 'not_configured':
+                    if '10_threat_intelligence' not in self.results:
+                        self.results['10_threat_intelligence'] = {}
+                    self.results['10_threat_intelligence']['virustotal'] = vt_result
+            except Exception as e:
+                print(f"  ⚠️ VirusTotal Error: {e}")
 
-            pd_result = self.check_pulsedive_threat(domain=self.domain)
-            if pd_result and pd_result.get('status') != 'not_configured':
-                if '10_threat_intelligence' not in self.results:
-                    self.results['10_threat_intelligence'] = {}
-                self.results['10_threat_intelligence']['pulsedive'] = pd_result
+            try:
+                pd_result = self.check_pulsedive_threat(domain=self.domain)
+                if pd_result and pd_result.get('status') != 'not_configured':
+                    if '10_threat_intelligence' not in self.results:
+                        self.results['10_threat_intelligence'] = {}
+                    self.results['10_threat_intelligence']['pulsedive'] = pd_result
+            except Exception as e:
+                print(f"  ⚠️ Pulsedive Error: {e}")
 
         # ViewDNS co-hosted domains (infrastructure discovery)
         if ip_addresses:
-            cohost = []
-            for ip in ip_addresses[:2]:
-                viewdns_result = self.check_viewdns_reverse_ip(ip)
-                if viewdns_result:
-                    cohost.append(viewdns_result)
-            if cohost:
-                if '1_application_discovery' not in self.results:
-                    self.results['1_application_discovery'] = {}
-                self.results['1_application_discovery']['co_hosted_domains'] = cohost
+            try:
+                cohost = []
+                for ip in ip_addresses[:2]:
+                    viewdns_result = self.check_viewdns_reverse_ip(ip)
+                    if viewdns_result:
+                        cohost.append(viewdns_result)
+                if cohost:
+                    if '1_application_discovery' not in self.results:
+                        self.results['1_application_discovery'] = {}
+                    self.results['1_application_discovery']['co_hosted_domains'] = cohost
+            except Exception as e:
+                print(f"  ⚠️ ViewDNS Error: {e}")
 
-
+        print(f"\n{'='*80}")
+        print("Phase 3 scan complete!")
+        print(f"{'='*80}\n")
+        
         return self.results
 
     def fetch_website(self):
